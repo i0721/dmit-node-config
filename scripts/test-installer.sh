@@ -5,11 +5,21 @@ bundle=${1:?verified distribution directory}
 version=${2:?exact version}
 prefix=${3:?private root-owned test installation directory}
 negative=${4:?signed negative fixtures directory}
+legacy=${5:?binary built from the pinned 0.1 source commit}
 script=$(realpath install.sh)
 bundle=$(realpath "$bundle")
 mkdir -p "$prefix"
-args=(--version "$version" --prefix "$prefix" --bundle-dir "$bundle" --config-dir "$prefix/no-config")
+mkdir -p "$prefix/bin" "$prefix/legacy-inputs"
+test "$("$legacy" --version)" = 'nodectl 0.1.0'
+install -m 0755 "$legacy" "$prefix/bin/nodectl"
+legacy_hash=$(sha256sum "$prefix/bin/nodectl" | cut -d ' ' -f 1)
+python3 scripts/release-smoke.py "$prefix/bin/nodectl" "$prefix/legacy-inputs"
+config_hash=$(sha256sum "$prefix/legacy-inputs/config/"* | sha256sum | cut -d ' ' -f 1)
+args=(--version "$version" --prefix "$prefix" --bundle-dir "$bundle" --config-dir "$prefix/legacy-inputs/config")
 sh "$script" "${args[@]}" --execute
+test "$(sha256sum "$prefix/lib/nodectl/versions/$legacy_hash" | cut -d ' ' -f 1)" = "$legacy_hash"
+test "$(sha256sum "$prefix/legacy-inputs/config/"* | sha256sum | cut -d ' ' -f 1)" = "$config_hash"
+echo 'ACTUAL_0_1_BINARY_AND_INPUT_UPGRADE_PASS'
 original=$(sha256sum "$prefix/bin/nodectl" | cut -d ' ' -f 1)
 # The same valid signature must be rejected under a different tag identity,
 # before any archive can be selected or executed.
