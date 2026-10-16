@@ -26,7 +26,8 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 [ "$ready" = yes ] || { docker logs "$name"; echo 'systemd did not boot' >&2; exit 1; }
-docker exec -e NODECTL_NETWORK_GATE=yes "$name" bash /work/tests/integration/runtime.sh > "$log" 2>&1 &
+: > "$log"
+docker exec -e NODECTL_NETWORK_GATE=yes "$name" bash /work/tests/integration/runtime.sh >> "$log" 2>&1 &
 runtime=$!
 network_ready=no
 for _ in $(seq 1 120); do

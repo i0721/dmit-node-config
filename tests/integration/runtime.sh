@@ -62,6 +62,26 @@ nodectl recover
 test ! -e /var/lib/dmit-node/uninstall.json
 nodectl export-clients --output /root/nodectl-test/recovered-clients >/dev/null
 echo 'UNINSTALL_INTERRUPTION_RECOVERY_PASS'
+# Uninstall must refuse incomplete history and drift without changing services.
+mv /var/lib/dmit-node/installation.json /root/nodectl-test/installation.json
+if nodectl uninstall --execute >/root/nodectl-test/no-baseline.log 2>&1; then exit 1; fi
+mv /root/nodectl-test/installation.json /var/lib/dmit-node/installation.json
+mv /etc/nginx/nginx.conf /root/nodectl-test/managed-nginx-link
+printf 'operator drift\n' > /etc/nginx/nginx.conf
+if nodectl uninstall --execute >/root/nodectl-test/drift.log 2>&1; then exit 1; fi
+grep -q 'operator drift' /etc/nginx/nginx.conf
+mv -f /root/nodectl-test/managed-nginx-link /etc/nginx/nginx.conf
+systemctl is-active --quiet nginx xray
+echo 'UNINSTALL_MISSING_BASELINE_AND_DRIFT_REFUSED_PASS'
+# Fail both the original restore and its rollback, then retry via recover.
+if NODECTL_FAILPOINT=restore-entry-0 nodectl uninstall --execute >/root/nodectl-test/uninstall-restore-fault.log 2>&1; then exit 1; fi
+test -f /var/lib/dmit-node/uninstall.json
+test -f /var/lib/dmit-node/transaction.json
+nodectl recover
+test ! -e /var/lib/dmit-node/uninstall.json
+test ! -e /var/lib/dmit-node/transaction.json
+nodectl apply "$first" >/dev/null
+echo 'UNINSTALL_FAILED_RESTORE_RECOVERY_PASS'
 nodectl uninstall
 nodectl uninstall --execute
 cmp /etc/nginx/nginx.conf /root/nodectl-test/original-nginx.conf
