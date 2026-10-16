@@ -15,7 +15,7 @@
   <text x="40" y="82" class="small">教程示意图 · 不是控制台截图或部署成功证明</text>
   <rect x="40" y="115" width="300" height="130" rx="14" class="box"/>
   <text x="62" y="151" class="heading">Cloudflare 权威 DNS</text>
-  <text x="62" y="186">yushulinfeng.com</text><text x="62" y="220" class="small">dmit-*：A / AAAA，灰云</text>
+  <text x="62" y="186">example.com</text><text x="62" y="220" class="small">dmit-*：A / AAAA，灰云</text>
   <rect x="425" y="115" width="285" height="130" rx="14" class="blue"/>
   <text x="449" y="155" class="heading">客户端</text><text x="449" y="190">解析后连接 DMIT</text><text x="449" y="222" class="small">UUID / 路径来自成功版本</text>
   <path d="M340 177H421" class="line dns"/>

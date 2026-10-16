@@ -1,0 +1,6 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Local private inventories and generated build outputs are not public source"
+paths = ['''(^|/)(\.git|\.local-deploy|target|dist)/''']

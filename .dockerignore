@@ -1,0 +1,11 @@
+.git
+.local-deploy
+target
+dist
+*.pem
+*.key
+node.toml
+secrets.json
+generated
+exports
+**/__pycache__

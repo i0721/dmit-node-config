@@ -2,9 +2,9 @@ schema_version = 1
 
 [node]
 # Tutorial names in docs/deployment.md; replace documentation IPs before apply.
-domain = "dmit-qwq1.yushulinfeng.com"
-aliases = ["dmit-www.yushulinfeng.com"]
-reality_domain = "dmit-reality.yushulinfeng.com"
+domain = "dmit-qwq1.example.com"
+aliases = ["dmit-www.example.com"]
+reality_domain = "dmit-reality.example.com"
 ipv4 = "203.0.113.10"
 ipv6 = "2001:db8::10"
 

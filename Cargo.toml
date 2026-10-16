@@ -1,7 +1,9 @@
 [package]
 name = "nodectl"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
+rust-version = "1.99.1"
+repository = "https://github.com/i0721/dmit-node-config"
 description = "Transactional configuration management for a bare-metal Xray node"
 license = "MIT"
 
@@ -23,6 +25,10 @@ tempfile = "3"
 toml = "0.8"
 uuid = { version = "1", features = ["v4"] }
 x25519-dalek = { version = "2", features = ["static_secrets"] }
+
+[features]
+# Only isolated integration builds include explicit fault injection.
+integration-test = []
 
 [profile.release]
 lto = true

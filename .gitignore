@@ -1,4 +1,6 @@
 /target/
+/dist/
+/*.cdx.json
 /node.toml
 /secrets.json
 /config/node.toml

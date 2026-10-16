@@ -1,9 +1,12 @@
 mod config;
+mod diagnostics;
 mod host;
 mod render;
+mod setup;
 mod store;
 #[cfg(test)]
 mod tests;
+mod upgrade;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -22,6 +25,34 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Action {
+    /// Aggregate environment checks without changing the host.
+    Doctor {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show versions, services, receipts, certificates and interrupted work.
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Preview or explicitly create the single source of configuration.
+    Setup(setup::Setup),
+    /// Validate schema compatibility; unsupported schemas are never rewritten.
+    Migrate,
+    /// Install a signed exact tool version; preview unless --execute is supplied.
+    Upgrade {
+        #[arg(long)]
+        version: String,
+        #[arg(long, default_value = "/usr/local")]
+        prefix: PathBuf,
+        #[arg(long)]
+        execute: bool,
+    },
+    /// Restore entrypoints and service states captured before first apply.
+    Uninstall {
+        #[arg(long)]
+        execute: bool,
+    },
     /// Create missing configuration and credentials; never reset existing values.
     Init {
         #[arg(long)]
@@ -78,6 +109,22 @@ fn run() -> Result<()> {
     }
     let store = store::Store::new(cli.config_dir, cli.state_dir)?;
     match cli.command {
+        Action::Doctor { json } => diagnostics::doctor(&store, json)?,
+        Action::Status { json } => diagnostics::status(&store, json)?,
+        Action::Setup(setup) => setup::run(&store, setup)?,
+        Action::Migrate => {
+            let _guard = store.lock()?;
+            diagnostics::migrate(&store)?;
+        }
+        Action::Upgrade {
+            version,
+            prefix,
+            execute,
+        } => upgrade::run(&store, &version, &prefix, execute)?,
+        Action::Uninstall { execute } => {
+            let _guard = if execute { Some(store.lock()?) } else { None };
+            host::uninstall(&store, execute)?;
+        }
         Action::Init { example, rotate } => {
             let _guard = store.lock()?;
             config::init(&store.config_dir, example.as_deref(), &rotate)?;
