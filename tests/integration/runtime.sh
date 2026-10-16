@@ -84,6 +84,12 @@ test ! -e /var/lib/dmit-node/uninstall.json
 test ! -e /var/lib/dmit-node/transaction.json
 nodectl apply "$first" >/dev/null
 echo 'UNINSTALL_FAILED_RESTORE_RECOVERY_PASS'
+if NODECTL_FAILPOINT=uninstall-restored nodectl uninstall --execute >/root/nodectl-test/uninstall-commit-fault.log 2>&1; then exit 1; fi
+test ! -e /var/lib/dmit-node/current
+test -f /var/lib/dmit-node/uninstall.json
+nodectl recover
+nodectl export-clients --output /root/nodectl-test/uninstall-commit-recovered-clients >/dev/null
+echo 'UNINSTALL_COMPLETED_RESTORE_INTERRUPTION_RECOVERY_PASS'
 nodectl uninstall
 nodectl uninstall --execute
 cmp /etc/nginx/nginx.conf /root/nodectl-test/original-nginx.conf

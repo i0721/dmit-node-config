@@ -977,7 +977,12 @@ fn restore(store: &Store, tx: &Transaction) -> Result<()> {
         errors.join(", ")
     );
     let success = store.state_dir.join("success").join(&tx.candidate);
-    if tx.current.as_deref() != Some(tx.candidate.as_str()) && success.exists() {
+    // Uninstall retains successful snapshot history. Its pending journal may
+    // still need that marker to recover the installed state after a crash.
+    if !store.state_dir.join("uninstall.json").exists()
+        && tx.current.as_deref() != Some(tx.candidate.as_str())
+        && success.exists()
+    {
         fs::remove_file(success)?;
     }
     fs::remove_file(store.state_dir.join("transaction.json"))?;
@@ -1282,6 +1287,7 @@ pub fn uninstall(store: &Store, execute: bool) -> Result<()> {
         fs::remove_file(pending)?;
         bail!("Uninstall failed; installed entrypoints and services restored");
     }
+    checkpoint("uninstall-restored")?;
     fs::remove_file(pending)?;
     println!("Original entrypoints and service states restored and verified.");
     Ok(())
