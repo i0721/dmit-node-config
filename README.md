@@ -6,6 +6,8 @@
 
 首次部署请按 [完整部署教程：Cloudflare DNS、证书、服务器与 WARP](docs/deployment.md) 顺序操作。教程使用 `dmit-qwq1.yushulinfeng.com`、`dmit-www.yushulinfeng.com`、`dmit-reality.yushulinfeng.com`，涵盖 DNS/API Token、两套证书首次申请及自动续期、软件安装、WARP TUN 调试、上线验收和故障恢复。本文保留项目命令的简要参考。
 
+配套的 [截图与图解导航](docs/visual-guide.md) 包含 4 张真实 Cloudflare 表单/模板截图、2 张工程流程图和 [部署记录模板](docs/resources/deployment-record.template.md)。草稿截图均明确标注未提交。
+
 ## 构建与验证
 
 ```sh

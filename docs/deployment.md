@@ -2,6 +2,8 @@
 
 核对日期：2026-10-16。本文对应仓库当前 `nodectl`、[全局配置示例](../config/node.example.toml) 和 [版本锁定清单](../versions.lock.toml)。默认环境为一台全新的 Debian 12/13、Linux amd64、systemd 主机；Ubuntu 用户使用对应的软件源。已有服务的主机先按第 1 节盘点，不能直接当新机器覆盖。
 
+配套资源：[截图与图解导航](visual-guide.md) · [部署记录模板](resources/deployment-record.template.md)。截图为 Cloudflare 的真实未提交表单，流程图为示意图，均在对应步骤说明状态；实际服务器验收仍需执行本文命令。
+
 ## 目录与执行顺序
 
 1. [命名、现状与准备](#1-命名现状与准备)
@@ -20,6 +22,10 @@
 14. [部署记录与最终验收](#14-部署记录与最终验收)
 
 首次安装的顺序是 **DNS → 软件 → node.toml → 域名证书 → 临时 HTTP 服务 → IP 证书 → WARP 注册/调试 → check → 停止临时服务 → apply → 启用续期**。Nginx 的最终配置依赖两套证书，不能先启动最终配置再等它签发自身所需的证书。
+
+![两套证书首次签发、临时 HTTP 验证、首次应用和长期自动续期的顺序示意图](assets/deployment/certificate-lifecycle.svg)
+
+图示说明见 [图 6](visual-guide.md#图-6两套证书的首次签发与续期)。它表示操作顺序，不表示证书已签发或服务已上线。
 
 ## 1. 命名、现状与准备
 
@@ -44,6 +50,8 @@
 | WARP/MASQUE | usque 独立 TUN 调试 | 注册 usque 凭据，检查隧道，不接管默认路由 |
 
 WARP 不要求把节点域名加入 Zero Trust，也不需要为上述子域创建 Cloudflare Tunnel、Access 应用、Gateway 策略或 Workers 路由。浏览器登录 Cloudflare 不会自动把服务器加入 WARP。普通 usque 注册与 DNS API Token 是两套不同凭据。
+
+![Cloudflare 灰云 DNS、Nginx 和 Xray 入口、DMIT 原出口以及独立 usque WARP 支路示意图](assets/deployment/network.svg)
 
 ### 1.3 主机盘点
 
@@ -106,6 +114,12 @@ DNS 记录表中手工添加的根域 NS 不等同于注册商的权威委派；
 
 网页内容字段不展开 `$DMIT_IPV4`，要填地址本身。三个名称不要再有指向旧机器的 A/AAAA、冲突 CNAME 或覆盖它们的 Worker 自定义域。
 
+下面是 `dmit-www` 的真实 A 记录草稿。IPv4 留空、尚未保存；部署时填写自己的地址，确认灰云 **仅 DNS** 后再保存。另两条 A 记录按表格分别处理。
+
+![Cloudflare A 记录草稿：dmit-www，IPv4 留空，代理状态为仅 DNS，尚未提交](assets/deployment/cloudflare-dns-a-draft.jpg)
+
+IPv6 对应的 AAAA 表单见 [图 2](visual-guide.md#图-2可选-ipv6-aaaa-记录)。没有公网 IPv6 就不创建该记录。
+
 本方案需要客户端直达 DMIT 的 Nginx/Xray；橙云会把解析与连接路径换成 Cloudflare 代理。尤其 REALITY 不能按普通 HTTPS CDN 回源理解。灰云时 Cloudflare 的 WAF、缓存、边缘 HTTP/3、Always Use HTTPS 及边缘 SSL 模式不会替代本机配置，也无需为了这些子域修改整域设置。[代理状态原理](https://developers.cloudflare.com/dns/proxy-status/)
 
 ### 2.3 确认解析与 CAA
@@ -127,6 +141,10 @@ A 必须返回自己的 DMIT IPv4；配置 IPv6 时 AAAA 也必须正确。没�
 ### 3.1 创建仅用于 DNS-01 的用户 Token
 
 Cloudflare 右上角用户菜单 → My Profile/我的个人资料 → API Tokens/API 令牌 → Create Token。可从 Edit zone DNS 模板开始，并将最终权限限制为：
+
+模板选择入口见 [图 3](visual-guide.md#图-3dns-token-模板入口)。以下权限草稿仅演示设置，拍摄后已退出，没有生成实际 Token。
+
+![Cloudflare Token 草稿：DNS 编辑、区域读取，资源范围为特定区域 yushulinfeng.com](assets/deployment/cloudflare-token-permissions-draft.jpg)
 
 | 配置项 | 值 |
 | --- | --- |
@@ -772,6 +790,15 @@ nodectl 为防泄露会隐藏外部工具的原始输出。必要时在主机上
 ## 14. 部署记录与最终验收
 
 在 `/root/dmit-install-records` 记录这次实际结果；仓库里只保留下面的字段定义，不填真实秘密。
+
+可复制 [部署记录模板](resources/deployment-record.template.md)，填写 DNS、证书、WARP、上线和恢复证据。模板有“待验收”状态，避免把尚未执行的步骤写成成功。以下命令在目标文件不存在时才创建副本：
+
+```bash
+deploy_record='/root/dmit-install-records/deployment-record.md'
+if [ ! -e "$deploy_record" ]; then
+  install -m 0600 /opt/dmit-node-config/docs/resources/deployment-record.template.md "$deploy_record"
+fi
+```
 
 | 记录项 | 应记录的内容 |
 | --- | --- |

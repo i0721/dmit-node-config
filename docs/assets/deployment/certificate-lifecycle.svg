@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="910" viewBox="0 0 1200 910" role="img" aria-labelledby="title desc">
+  <title id="title">两套证书的首次部署和续期顺序</title>
+  <desc id="desc">先用 DNS-01 取得三域名证书，再启动只提供 HTTP-01 的临时 Nginx，取得 IP 证书。检查候选后停止临时服务并应用；最终 Nginx 接管 webroot。acme.sh 定时更新两套证书，再由 nodectl renew-hook 检查和 reload Nginx。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#475569"/></marker>
+    <style>
+      text{font-family:'Microsoft YaHei','Segoe UI',sans-serif;fill:#172554;font-size:20px}.title{font-size:30px;font-weight:700}
+      .heading{font-size:23px;font-weight:700}.small{font-size:18px;fill:#475569}.step{fill:#eff6ff;stroke:#2563eb;stroke-width:2}
+      .renew{fill:#ecfdf5;stroke:#059669;stroke-width:2}.line{fill:none;stroke:#475569;stroke-width:3;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1200" height="910" fill="white"/>
+  <text x="40" y="49" class="title">先准备证书，再启动最终服务</text>
+  <text x="40" y="82" class="small">教程示意图 · 按编号执行 · 两套证书独立维护</text>
+  <rect x="40" y="120" width="500" height="170" rx="14" class="step"/>
+  <text x="65" y="162" class="heading">1　域名证书：DNS-01</text><text x="65" y="202">Cloudflare DNS Token → 临时 TXT</text>
+  <text x="65" y="237" class="small">SAN：dmit-qwq1 / dmit-www / dmit-reality</text><text x="65" y="270" class="small">ECDSA P-384；此时无需最终 Nginx</text>
+  <rect x="660" y="120" width="500" height="170" rx="14" class="step"/>
+  <text x="685" y="162" class="heading">2　IP 证书：HTTP-01</text><text x="685" y="202">临时 Nginx :80 → 公网验证 webroot</text>
+  <text x="685" y="237" class="small">SAN：自己的 IPv4 / 可选 IPv6</text><text x="685" y="270" class="small">shortlived；安装到 /etc/ssl/dmit/ip</text>
+  <path d="M540 205H654" class="line"/>
+  <rect x="660" y="385" width="500" height="170" rx="14" class="step"/>
+  <text x="685" y="427" class="heading">3　check → 停临时服务 → apply</text><text x="685" y="467">候选摘要、证书、权限与程序检查</text>
+  <text x="685" y="502" class="small">应用后进行 XHTTP / WS / REALITY 握手</text><text x="685" y="535" class="small">全部成功才更新 current / previous</text>
+  <path d="M910 290V379" class="line"/>
+  <rect x="40" y="385" width="500" height="170" rx="14" class="step"/>
+  <text x="65" y="427" class="heading">4　最终 Nginx 接管入口</text><text x="65" y="467">:443 提供网站与代理入口</text>
+  <text x="65" y="502" class="small">:80 保留 /.well-known/acme-challenge/</text><text x="65" y="535" class="small">公网裸 IP 必须能访问该验证目录</text>
+  <path d="M660 470H546" class="line"/>
+  <rect x="40" y="650" width="500" height="170" rx="14" class="renew"/>
+  <text x="65" y="692" class="heading">5　acme.sh 定时检查两套证书</text><text x="65" y="732">域名用 DNS-01，IP 用 HTTP webroot</text>
+  <text x="65" y="767" class="small">IP 证书按短周期安排更新与到期告警</text><text x="65" y="800" class="small">不要求每次续期停止运行中的 Nginx</text>
+  <path d="M290 555V644" class="line"/>
+  <rect x="660" y="650" width="500" height="170" rx="14" class="renew"/>
+  <text x="685" y="692" class="heading">6　安装证书 → renew-hook</text><text x="685" y="732">核对两套证书 → nginx -t → reload</text>
+  <text x="685" y="767" class="small">核实外部 TLS serial / notAfter 已更新</text><text x="685" y="800" class="small">失败保留现场，先排查再重试</text>
+  <path d="M540 735H654" class="line"/>
+  <text x="40" y="878" class="small">首次 install-cert 不设 reload hook；首次 apply 成功后再安装两套 hook 和 cron。</text>
+</svg>

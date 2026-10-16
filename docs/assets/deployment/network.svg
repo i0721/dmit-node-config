@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800" role="img" aria-labelledby="title desc">
+  <title id="title">DMIT 节点流量与独立 WARP 关系图</title>
+  <desc id="desc">Cloudflare DNS 返回 DMIT 地址。客户端经 443 访问 Nginx，Nginx 经两个 Unix socket 到 Xray；8443 直接访问 Xray REALITY。Xray Freedom 使用 DMIT 原出口。独立 usque 创建 TUN 并连接 Cloudflare WARP，不接管默认路由。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#334155"/></marker>
+    <style>
+      text{font-family:'Microsoft YaHei','Segoe UI',sans-serif;fill:#172554;font-size:19px}
+      .title{font-size:30px;font-weight:700}.heading{font-size:23px;font-weight:700}.small{font-size:17px;fill:#475569}
+      .box{fill:#f8fafc;stroke:#94a3b8;stroke-width:2}.blue{fill:#eff6ff;stroke:#2563eb;stroke-width:2}.green{fill:#ecfdf5;stroke:#059669;stroke-width:2}
+      .line{fill:none;stroke:#334155;stroke-width:2.5;marker-end:url(#arrow)}.dns{stroke-dasharray:8 6}
+    </style>
+  </defs>
+  <rect width="1200" height="800" fill="white"/>
+  <text x="40" y="49" class="title">入口流量与 WARP 的边界</text>
+  <text x="40" y="82" class="small">教程示意图 · 不是控制台截图或部署成功证明</text>
+  <rect x="40" y="115" width="300" height="130" rx="14" class="box"/>
+  <text x="62" y="151" class="heading">Cloudflare 权威 DNS</text>
+  <text x="62" y="186">yushulinfeng.com</text><text x="62" y="220" class="small">dmit-*：A / AAAA，灰云</text>
+  <rect x="425" y="115" width="285" height="130" rx="14" class="blue"/>
+  <text x="449" y="155" class="heading">客户端</text><text x="449" y="190">解析后连接 DMIT</text><text x="449" y="222" class="small">UUID / 路径来自成功版本</text>
+  <path d="M340 177H421" class="line dns"/>
+  <text x="346" y="153" class="small">解析</text>
+  <rect x="425" y="335" width="285" height="145" rx="14" class="blue"/>
+  <text x="449" y="373" class="heading">Nginx</text><text x="449" y="408">TLS 1.3 · H2 / H3</text><text x="449" y="442" class="small">域名证书 / IP 默认站点证书</text>
+  <path d="M567 245V330" class="line"/><text x="580" y="289" class="small">443 TCP / UDP</text>
+  <rect x="830" y="335" width="325" height="145" rx="14" class="blue"/>
+  <text x="853" y="373" class="heading">原始 Xray Core</text><text x="853" y="408">XHTTP / WS / REALITY</text><text x="853" y="442" class="small">REALITY target → 本地 Nginx</text>
+  <path d="M710 405H825" class="line"/><text x="725" y="374" class="small">两个 UDS</text>
+  <path d="M710 181H990V330" class="line"/><text x="820" y="159" class="small">8443 TCP · REALITY</text>
+  <rect x="830" y="560" width="325" height="95" rx="14" class="box"/>
+  <text x="853" y="601" class="heading">DMIT 原公网出口</text><text x="853" y="634" class="small">Freedom 出站</text>
+  <path d="M990 480V555" class="line"/>
+  <rect x="40" y="560" width="300" height="130" rx="14" class="green"/>
+  <text x="62" y="600" class="heading">独立 usque 进程</text><text x="62" y="635">nativetun · 调试用 TUN</text><text x="62" y="669" class="small">/etc/usque/config.json</text>
+  <rect x="425" y="560" width="285" height="130" rx="14" class="green"/>
+  <text x="449" y="600" class="heading">Cloudflare WARP</text><text x="449" y="635">MASQUE 会话</text><text x="449" y="669" class="small">普通注册，独立凭据</text>
+  <path d="M340 624H420" class="line"/>
+  <text x="40" y="527" class="small">独立调试支路</text>
+  <rect x="40" y="730" width="1115" height="44" rx="8" fill="#f1f5f9"/>
+  <text x="60" y="759">默认路由保持 DMIT 原出口。WARP 不会因服务启动而自动成为 Xray 的出站。</text>
+</svg>
