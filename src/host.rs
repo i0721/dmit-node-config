@@ -808,8 +808,16 @@ fn activate(
         if c.warp.enabled {
             command("systemctl", &["enable", "usque-warp"])?;
             command("systemctl", &["restart", "usque-warp"])?;
-        } else {
-            command("systemctl", &["disable", "--now", "usque-warp"])?;
+        } else if warp_state.active || warp_state.enabled.starts_with("enabled") {
+            command("systemctl", &["stop", "usque-warp"])?;
+            command("systemctl", &["disable", "usque-warp"])?;
+            // disable also removes linked units stored outside /etc and /usr.
+            // Retain our managed entrypoint while leaving the service disabled.
+            store::replace_link(
+                &store.release(id)?.join("systemd/usque-warp.service"),
+                Path::new("/etc/systemd/system/usque-warp.service"),
+            )?;
+            command("systemctl", &["daemon-reload"])?;
         }
     }
     checkpoint("services")?;

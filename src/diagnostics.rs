@@ -320,6 +320,12 @@ pub fn status(store: &Store, as_json: bool) -> Result<()> {
     let checked = current
         .as_ref()
         .is_some_and(|id| store.state_dir.join("checks").join(id).is_file());
+    let checked_at = current
+        .as_ref()
+        .and_then(|id| fs::metadata(store.state_dir.join("checks").join(id)).ok())
+        .and_then(|m| m.modified().ok())
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_secs());
     let certs = store
         .inputs()
         .map(|(c, _)| host::certificates(&c).is_ok())
@@ -327,7 +333,7 @@ pub fn status(store: &Store, as_json: bool) -> Result<()> {
     let report = json!({"tool_version":env!("CARGO_PKG_VERSION"), "current":current,"current_integrity":current_valid,
         "previous":previous,"pending_transaction":store.state_dir.join("transaction.json").exists(),
         "pending_uninstall":store.state_dir.join("uninstall.json").exists(),
-        "check_receipt_present":checked,"certificates_valid_24h":certs,"services":services});
+        "check_receipt_present":checked,"last_check_unix_seconds":checked_at,"certificates_valid_24h":certs,"services":services});
     if as_json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
@@ -345,6 +351,12 @@ pub fn status(store: &Store, as_json: bool) -> Result<()> {
         for (name, state) in services {
             println!("{name}: {state}");
         }
+        println!(
+            "Last check (Unix UTC seconds): {}",
+            checked_at
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "none".into())
+        );
     }
     Ok(())
 }

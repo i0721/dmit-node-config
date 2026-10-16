@@ -7,11 +7,18 @@ label=${base//[:.]/-}
 name="nodectl-test-$label-$$"
 mkdir -p dist
 log="dist/integration-$label-$(uname -m).log"
+build_log="dist/integration-build-$label-$(uname -m).log"
 work=$(mktemp -d)
-cleanup() { docker rm -f "$name" >/dev/null 2>&1 || true; rm -rf "$work"; }
+cleanup() {
+  result=$?
+  if [ "$result" != 0 ] && [ "${NODECTL_KEEP_FAILED:-}" = yes ]; then echo "Retained isolated failed test container: $name";
+  else docker rm -f "$name" >/dev/null 2>&1 || true; fi
+  rm -rf "$work"
+}
 trap cleanup EXIT
-docker build --network host --build-arg BASE="$base" -f tests/integration/Dockerfile -t "nodectl-integration:$label" .
-docker build --network host -f tests/integration/Dockerfile.h3 -t nodectl-integration-h3 .
+echo "Building clean $base integration environment..."
+docker build --network host --build-arg BASE="$base" -f tests/integration/Dockerfile -t "nodectl-integration:$label" . > "$build_log" 2>&1 || { tail -50 "$build_log"; exit 1; }
+docker build --network host -f tests/integration/Dockerfile.h3 -t nodectl-integration-h3 . >> "$build_log" 2>&1 || { tail -50 "$build_log"; exit 1; }
 docker run --detach --tty --name "$name" --label nodectl.isolated-test=true --privileged --cgroupns=host --env container=docker --tmpfs /run --tmpfs /run/lock --tmpfs /tmp -v /sys/fs/cgroup:/sys/fs/cgroup:rw "nodectl-integration:$label" >/dev/null
 ready=no
 for _ in $(seq 1 60); do

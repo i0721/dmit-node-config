@@ -13,7 +13,11 @@ first=$(nodectl render)
 check "$first"
 if nodectl apply "$first" > /root/nodectl-test/no-takeover.log 2>&1; then echo 'Unmanaged service overwritten' >&2; exit 1; fi
 nodectl takeover "$first" >/dev/null
-nodectl apply "$first"
+if ! nodectl apply "$first"; then
+  curl --fail --silent --show-error --max-time 5 https://probe.integration.test:9443/ >/dev/null || true
+  tail -8 /root/nodectl-test/probe.log
+  exit 1
+fi
 nodectl doctor
 nodectl export-clients --output /root/nodectl-test/clients >/dev/null
 test -f /var/lib/dmit-node/installation.json

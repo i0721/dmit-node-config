@@ -21,6 +21,7 @@ cp nodectl.cdx.json "$work/sbom.cdx.json"
 cargo metadata --locked --format-version 1 --filter-platform "$target" > "$work/cargo-metadata.json"
 python3 scripts/release-licenses.py "$work"
 printf 'version=%s\ntarget=%s\ncommit=%s\nrust=%s\nsource_date_epoch=%s\n' "$version" "$target" "$commit" "$(rustc --version)" "$SOURCE_DATE_EPOCH" > "$work/BUILD-INFO"
+printf 'libc=%s\ncyclonedx=%s\n' "$(getconf GNU_LIBC_VERSION)" "$(cargo cyclonedx --version)" >> "$work/BUILD-INFO"
 mkdir -p dist
 tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner -C "$work" -czf "$out" nodectl LICENSE THIRD_PARTY.md sbom.cdx.json BUILD-INFO licenses
 # Verify the exact archived executable, not just target/release.

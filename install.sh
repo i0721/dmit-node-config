@@ -30,7 +30,8 @@ ASSET="nodectl-${VERSION}-${ARCH}-unknown-linux-gnu.tar.gz"
 IDENTITY="https://github.com/$REPOSITORY/.github/workflows/release.yml@refs/tags/$VERSION"
 printf 'Version: %s\nArchitecture: %s\nAsset: %s\nInstall: %s/bin/nodectl\nTrust: %s (GitHub OIDC)\n' "$VERSION" "$ARCH" "$ASSET" "$PREFIX" "$IDENTITY"
 [ "$EXECUTE" = yes ] || { printf '%s\n' 'Preview only; rerun with --execute. No files or downloads changed.'; exit 0; }
-for tool in curl sha256sum tar cosign mktemp install; do command -v "$tool" >/dev/null 2>&1 || die "Missing $tool; see docs/installation.md"; done
+for tool in curl sha256sum tar cosign mktemp install flock sync; do command -v "$tool" >/dev/null 2>&1 || die "Missing $tool; see docs/installation.md"; done
+[ ! -e "$STATE_DIR/transaction.json" ] && [ ! -e "$STATE_DIR/uninstall.json" ] || die 'Recover the interrupted lifecycle transaction before installing/upgrading'
 check_dir() {
   [ ! -L "$1" ] || die 'Refusing symbolic-link destination'
   if [ -e "$1" ]; then
@@ -45,6 +46,8 @@ check_tree "$PREFIX"
 check_tree "$PREFIX/bin"
 check_tree "$PREFIX/lib/nodectl/versions"
 mkdir -p "$PREFIX/bin" "$PREFIX/lib/nodectl/versions"
+exec 9>"$PREFIX/lib/nodectl/install.lock"
+flock -n 9 || die 'Another installation is running'
 work=$(mktemp -d)
 stage=
 cleanup() { rm -f "${stage:-$work/unused}"; rm -rf "$work"; }
@@ -82,11 +85,13 @@ if [ -e "$dest" ] || [ -L "$dest" ]; then
   old_hash=$(sha256sum "$dest" | cut -d ' ' -f 1)
   backup="$PREFIX/lib/nodectl/versions/$old_hash"
   if [ -e "$backup" ]; then [ "$(sha256sum "$backup" | cut -d ' ' -f 1)" = "$old_hash" ] || die 'Previous binary backup corrupted';
-  else install -m 0755 "$dest" "$backup"; fi
+  else install -m 0755 "$dest" "$backup"; sync -f "$backup"; fi
   printf 'Previous binary retained: %s\n' "$backup"
 fi
 stage=$(mktemp "$PREFIX/bin/.nodectl-XXXXXXXX")
 install -m 0755 "$work/nodectl" "$stage"
+sync -f "$stage"
 mv -f "$stage" "$dest"
+sync -f "$PREFIX/bin"
 stage=
 printf 'Installed %s at %s\n' "$VERSION" "$dest"
