@@ -1065,6 +1065,13 @@ fn handshake(c: &Config, s: &Secrets, reference: &Reference, kind: &str) -> Resu
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let port = listener.local_addr()?.port();
     let mut outbound = render::outbound(c, s, kind, "chrome")?;
+    // Isolated integration fixtures use an ephemeral CA installed in the OS.
+    // Xray otherwise defaults to its embedded public roots. Keep verification
+    // enabled; release binaries never include this test-only trust selection.
+    #[cfg(feature = "integration-test")]
+    if kind != "reality" {
+        outbound["streamSettings"]["tlsSettings"]["useSystemCA"] = json!(true);
+    }
     // Local loopback is the server under test; retain the real SNI and Host.
     outbound["settings"]["vnext"][0]["address"] = json!("127.0.0.1");
     let profile = json!({"log":{"loglevel":"none"},"inbounds":[{"listen":"127.0.0.1","port":port,

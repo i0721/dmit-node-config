@@ -59,10 +59,23 @@ jobs:
           cosign sign-blob --yes --bundle SHA256SUMS.sigstore.json SHA256SUMS
           cosign verify-blob --bundle SHA256SUMS.sigstore.json --certificate-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@refs/tags/$TAG" --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
           sha256sum -c SHA256SUMS
+      - name: Sign isolated wrong-architecture and failing-binary test fixtures
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          fixtures="$RUNNER_TEMP/nodectl-negative"
+          mkdir -p "$fixtures/wrong-arch" "$fixtures/failing-binary" "$fixtures/payload"
+          archive="nodectl-$TAG-x86_64-unknown-linux-gnu.tar.gz"
+          cp "dist/nodectl-$TAG-aarch64-unknown-linux-gnu.tar.gz" "$fixtures/wrong-arch/$archive"
+          cp /bin/false "$fixtures/payload/nodectl"
+          tar -C "$fixtures/payload" -czf "$fixtures/failing-binary/$archive" nodectl
+          for kind in wrong-arch failing-binary; do
+            (cd "$fixtures/$kind"; sha256sum "$archive" > SHA256SUMS; cosign sign-blob --yes --bundle SHA256SUMS.sigstore.json SHA256SUMS)
+          done
       - name: Exercise real signed install and upgrade failure gates
         env:
           TAG: ${{ github.ref_name }}
-        run: sudo env PATH="$PATH" bash scripts/test-installer.sh dist "$TAG" /opt/nodectl-release-test
+        run: sudo env PATH="$PATH" bash scripts/test-installer.sh dist "$TAG" /opt/nodectl-release-test "$RUNNER_TEMP/nodectl-negative"
       - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with: {subject-path: 'dist/*'}
       - name: Publish only verified assets and verify uploaded provenance

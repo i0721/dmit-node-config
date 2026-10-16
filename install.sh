@@ -30,7 +30,7 @@ ASSET="nodectl-${VERSION}-${ARCH}-unknown-linux-gnu.tar.gz"
 IDENTITY="https://github.com/$REPOSITORY/.github/workflows/release.yml@refs/tags/$VERSION"
 printf 'Version: %s\nArchitecture: %s\nAsset: %s\nInstall: %s/bin/nodectl\nTrust: %s (GitHub OIDC)\n' "$VERSION" "$ARCH" "$ASSET" "$PREFIX" "$IDENTITY"
 [ "$EXECUTE" = yes ] || { printf '%s\n' 'Preview only; rerun with --execute. No files or downloads changed.'; exit 0; }
-for tool in curl sha256sum tar cosign mktemp install flock sync; do command -v "$tool" >/dev/null 2>&1 || die "Missing $tool; see docs/installation.md"; done
+for tool in curl sha256sum tar cosign mktemp install flock sync od tr; do command -v "$tool" >/dev/null 2>&1 || die "Missing $tool; see docs/installation.md"; done
 [ ! -e "$STATE_DIR/transaction.json" ] && [ ! -e "$STATE_DIR/uninstall.json" ] || die 'Recover the interrupted lifecycle transaction before installing/upgrading'
 check_dir() {
   [ ! -L "$1" ] || die 'Refusing symbolic-link destination'
@@ -72,6 +72,9 @@ actual=$(sha256sum "$work/$ASSET" | cut -d ' ' -f 1)
 # Extract only the executable; never expand archive paths as root.
 [ "$(tar -tzf "$work/$ASSET" nodectl | wc -l)" -eq 1 ] || die 'Archive must contain one nodectl'
 tar -xOzf "$work/$ASSET" nodectl > "$work/nodectl"
+[ "$(od -An -tx1 -N6 "$work/nodectl" | tr -d ' \n')" = 7f454c460201 ] || die 'Expected a little-endian 64-bit ELF executable'
+case "$ARCH" in x86_64) machine=3e00;; aarch64) machine=b700;; esac
+[ "$(od -An -tx1 -j18 -N2 "$work/nodectl" | tr -d ' \n')" = "$machine" ] || die 'Binary CPU architecture mismatch'
 chmod 0700 "$work/nodectl"
 [ "$("$work/nodectl" --version)" = "nodectl ${VERSION#v}" ] || die 'Binary version mismatch'
 "$work/nodectl" --help >/dev/null

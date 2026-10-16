@@ -18,7 +18,7 @@ ip4=$(ip -4 -j address show dev eth0 | python3 -c 'import json,sys;print(json.lo
 for kind in domain ip; do
   curve=P-384; [ "$kind" = ip ] && curve=prime256v1
   openssl req -new -nodes -newkey ec -pkeyopt "ec_paramgen_curve:$curve" -keyout "/etc/ssl/dmit/$kind/privkey.pem" -out "/root/nodectl-test/$kind.csr" -subj /CN=node.integration.test >/dev/null 2>&1
-  if [ "$kind" = domain ]; then printf 'subjectAltName=DNS:node.integration.test,DNS:www.integration.test,DNS:reality.integration.test,DNS:probe.integration.test\n' > /root/nodectl-test/extensions;
+  if [ "$kind" = domain ]; then printf 'subjectAltName=DNS:node.integration.test,DNS:www.integration.test,DNS:reality.integration.test,DNS:probe.integration.test,IP:127.0.0.1\n' > /root/nodectl-test/extensions;
   else printf 'subjectAltName=IP:%s,IP:127.0.0.1,IP:::1\n' "$ip4" > /root/nodectl-test/extensions; fi
   printf 'basicConstraints=CA:FALSE\nextendedKeyUsage=serverAuth\n' >> /root/nodectl-test/extensions
   openssl x509 -req -in "/root/nodectl-test/$kind.csr" -CA /usr/local/share/ca-certificates/nodectl-test.crt -CAkey /root/nodectl-test/ca.key -CAcreateserial -out "/etc/ssl/dmit/$kind/fullchain.pem" -days 3 -extfile /root/nodectl-test/extensions >/dev/null 2>&1

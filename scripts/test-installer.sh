@@ -4,12 +4,21 @@ set -euo pipefail
 bundle=${1:?verified distribution directory}
 version=${2:?exact version}
 prefix=${3:?private root-owned test installation directory}
+negative=${4:?signed negative fixtures directory}
 script=$(realpath install.sh)
 bundle=$(realpath "$bundle")
 mkdir -p "$prefix"
 args=(--version "$version" --prefix "$prefix" --bundle-dir "$bundle" --config-dir "$prefix/no-config")
 sh "$script" "${args[@]}" --execute
 original=$(sha256sum "$prefix/bin/nodectl" | cut -d ' ' -f 1)
+# The same valid signature must be rejected under a different tag identity,
+# before any archive can be selected or executed.
+if sh "$script" --version v9999.0.0 --prefix "$prefix" --bundle-dir "$bundle" --execute; then echo 'Wrong workflow identity accepted' >&2; exit 1; fi
+test "$(sha256sum "$prefix/bin/nodectl" | cut -d ' ' -f 1)" = "$original"
+for kind in wrong-arch failing-binary; do
+  if sh "$script" --version "$version" --prefix "$prefix" --bundle-dir "$negative/$kind" --config-dir "$prefix/no-config" --execute; then echo "Invalid executable accepted: $kind" >&2; exit 1; fi
+  test "$(sha256sum "$prefix/bin/nodectl" | cut -d ' ' -f 1)" = "$original"
+done
 sh "$script" "${args[@]}" --execute
 test "$(sha256sum "$prefix/lib/nodectl/versions/$original" | cut -d ' ' -f 1)" = "$original"
 work=$(mktemp -d)

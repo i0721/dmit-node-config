@@ -7,7 +7,7 @@ python3 tests/integration/probe.py > /root/nodectl-test/probe.log 2>&1 &
 probe=$!
 trap 'kill "$probe" 2>/dev/null || true' EXIT
 check() {
-  nodectl check "$1" --client /usr/local/bin/xray --client-sha256 "$(sha256sum /usr/local/bin/xray | cut -d ' ' -f 1)" --client-version 26.10.10 --probe-url https://probe.integration.test:9443/ >/dev/null
+  nodectl check "$1" --client /usr/local/bin/xray --client-sha256 "$(sha256sum /usr/local/bin/xray | cut -d ' ' -f 1)" --client-version 26.10.10 --probe-url https://127.0.0.1:9443/ >/dev/null
 }
 first=$(nodectl render)
 check "$first"
