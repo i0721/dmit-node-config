@@ -200,7 +200,7 @@ getent group www-data >/dev/null || groupadd --system www-data
 id www-data >/dev/null 2>&1 || useradd --system --gid www-data --no-create-home --shell /usr/sbin/nologin www-data
 id xray >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin xray
 install -d -m 0750 -o xray -g www-data /var/log/xray
-install -d -m 0755 /var/log/nginx /var/www/html /var/www/acme
+install -d -m 0755 /var/log/nginx /var/www /var/www/html /var/www/acme
 install -d -m 0700 /etc/ssl/dmit/domain /etc/ssl/dmit/ip /etc/usque
 install -d -m 0700 /root/dmit-install-records
 systemctl enable --now cron
@@ -479,7 +479,7 @@ http {
 NGINX
 nginx -t -c /etc/nginx/dmit-bootstrap.conf
 nginx -c /etc/nginx/dmit-bootstrap.conf
-install -d -m 0755 /var/www/acme/.well-known/acme-challenge
+install -d -m 0755 /var/www/acme/.well-known /var/www/acme/.well-known/acme-challenge
 printf 'dmit-acme-ready\n' > /var/www/acme/.well-known/acme-challenge/probe
 chmod 0644 /var/www/acme/.well-known/acme-challenge/probe
 curl --fail http://127.0.0.1/.well-known/acme-challenge/probe

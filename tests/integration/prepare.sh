@@ -8,7 +8,7 @@ install -m 0755 /integration-target/debug/nodectl /usr/local/bin/nodectl
 id xray >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin xray
 getent group www-data >/dev/null
 install -d -m 0750 -o xray -g www-data /var/log/xray
-install -d -m 0755 /var/www/html /var/www/acme /var/log/nginx
+install -d -m 0755 /var/www /var/www/html /var/www/acme /var/log/nginx
 install -d -m 0700 /etc/ssl/dmit/domain /etc/ssl/dmit/ip /root/nodectl-test
 printf 'integration-ready\n' > /var/www/html/index.html
 chmod 0644 /var/www/html/index.html
