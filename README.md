@@ -6,7 +6,7 @@ Rust CLI `nodectl` 管理 Linux 裸机 Nginx、官方 Xray Core 与可选的独�
 
 ## 适用范围与系统
 
-面向能够管理 Linux、DNS 和证书的运维人员。目标矩阵为 Debian 12/13、Ubuntu 24.04/26.04，systemd，x86_64/ARM64。离线配置生成不需 root；主机应用需 root。不使用 Docker 或面板承载节点服务。
+面向能够管理 Linux、DNS 和证书的运维人员。x86_64 已验证 Debian 12/13、Ubuntu 24.04/26.04 的完整 systemd 生命周期。ARM64 的完整基线为 Debian 12；Ubuntu 24.04 也已通过，Debian 13 的运行日志通过但 CI 在清理阶段取消，Ubuntu 26.04 尚未完成，不能宣称全部 ARM64 系统兼容。离线配置生成不需 root；主机应用需 root。不使用 Docker 或面板承载节点服务。
 
 nodectl 管理配置和服务事务，安装器管理 nodectl。系统软件、DNS、证书和 WARP 注册按分层手册独立准备；render/apply 不暗中执行这些外部操作。WARP 不接管默认路由，Xray 默认 DMIT 直出。
 

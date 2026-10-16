@@ -1,6 +1,6 @@
 # 安装与交付
 
-目标矩阵：Debian 12/13、Ubuntu 24.04/26.04，Linux systemd，x86_64/ARM64；固定 Rust 1.99.1。实际通过状态以 [结果报告](defect/03-results.md) 和对应 Release 的 CI 为准，不能用仅编译结果宣称主机部署通过。
+运行基线：x86_64 的 Debian 12/13、Ubuntu 24.04/26.04，ARM64 的 Debian 12；固定 Rust 1.99.1。其他 ARM64 系统按 [结果报告](defect/03-results.md) 的实际证据判断，Ubuntu 26.04 ARM64 尚未完成验收。两个架构均须原生构建及归档自检，不能用仅编译结果宣称全部系统兼容。
 
 ## 无 Rust 的安装
 

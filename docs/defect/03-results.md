@@ -33,3 +33,7 @@
 本地旧版验证：从固定提交 `0a95befa777895dfdc544a6577bf56a3ff82014a` 实际构建 nodectl 0.1.0，通用 v1 输入校验通过；正式签名升级流程仍待发布阶段。25 项 Rust 测试合计通过（20 普通单元、1 单独运行的官方 Xray 兼容、4 CLI），clippy 全功能、文档/Schema/工作流检查、actionlint、cargo-deny、工作树及 12 次提交密钥扫描通过。cargo-deny 仅有两个未用到许可白名单项的警告。
 
 环境记录：准备本地隔离环境时误安装发行版 docker.io，与既有 Docker CE 冲突；已恢复原有 Docker CE/CLI/rootless 29.8.2 与 containerd.io 2.3.6，包审计通过，原有三个容器恢复运行。生产 VPS 未用于故障注入或卸载。
+
+系统证据：[CI 38969822266](https://github.com/i0721/dmit-node-config/actions/runs/38969822266)，源码提交 `8fba15a94db1389175da7ecead50bc4e26a3330a`。四个 x86_64 系统、ARM64 Debian 12 与 Ubuntu 24.04 的任务成功；ARM64 Debian 13 已上传 INTEGRATION_PASS、十个 RECOVERY_PASS 和卸载末尾中断恢复通过的日志，但任务在收尾阶段被取消。用户要求不再等待非必需扩展矩阵后，取消剩余任务，Ubuntu 26.04 ARM64 未完成，不算通过。该次工作流总体为 cancelled，不能把它写成整体绿色。已下载并逐一核对七份实际运行通过的日志。
+
+日常 CI 收敛为四个 x86_64 系统与 ARM64 Debian 12 基线。发布不重复已有系统集成，仍强制单元/安全检查、双架构原生测试和归档自检，以及实际签名安装、旧版升级、负向拒绝与来源证明验证。此范围调整来自用户本轮明确要求，见实施方案增补。

@@ -8,6 +8,9 @@ permissions:
 jobs:
   quality:
     uses: ./.github/workflows/ci.yml
+    # System integration is checked on the source PR; release builds rerun
+    # unit/security gates and both native archive self-tests without duplicating it.
+    with: {run_integration: false}
     secrets: inherit
   build:
     needs: quality
