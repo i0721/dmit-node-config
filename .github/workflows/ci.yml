@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
   workflow_call:
     inputs:
-      run_integration:
+      skip_integration:
         type: boolean
-        default: true
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -37,7 +37,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   integration:
-    if: github.event_name != 'workflow_call' || inputs.run_integration
+    if: ${{ !inputs.skip_integration }}
     strategy:
       fail-fast: false
       matrix:
