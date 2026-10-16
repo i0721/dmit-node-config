@@ -604,7 +604,15 @@ fn service_state(name: &str) -> Result<Service> {
         .to_owned()
     };
     ensure!(
-        ["enabled", "enabled-runtime", "disabled", "static", ""].contains(&enabled.as_str()),
+        [
+            "enabled",
+            "enabled-runtime",
+            "disabled",
+            "linked",
+            "static",
+            ""
+        ]
+        .contains(&enabled.as_str()),
         "Unsupported existing service enable state for {name}; preserve it explicitly before takeover"
     );
     let active = command("systemctl", &["show", name, "-p", "ActiveState", "--value"])?;

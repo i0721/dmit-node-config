@@ -37,6 +37,7 @@ next=$(nodectl render)
 check "$next"
 for stage in entry-0 entry-1 entry-2 entry-3 entry-4 daemon-reload xray nginx services health; do
   if NODECTL_FAILPOINT="$stage" nodectl apply "$next" >/root/nodectl-test/fault.log 2>&1; then echo "Fault not injected: $stage" >&2; exit 1; fi
+  grep -q "Injected integration failure: $stage" /root/nodectl-test/fault.log || { cat /root/nodectl-test/fault.log; exit 1; }
   test "$(basename "$(readlink /var/lib/dmit-node/current)")" = "$first"
   test ! -e /var/lib/dmit-node/transaction.json
   systemctl is-active --quiet nginx xray
@@ -44,6 +45,7 @@ for stage in entry-0 entry-1 entry-2 entry-3 entry-4 daemon-reload xray nginx se
   echo "RECOVERY_PASS:$stage"
 done
 if NODECTL_FAILPOINT=journal nodectl apply "$next" >/root/nodectl-test/fault.log 2>&1; then exit 1; fi
+grep -q 'Injected integration failure: journal' /root/nodectl-test/fault.log || { cat /root/nodectl-test/fault.log; exit 1; }
 test -f /var/lib/dmit-node/transaction.json
 if nodectl render >/root/nodectl-test/locked.log 2>&1; then echo 'Pending transaction not locked' >&2; exit 1; fi
 nodectl recover
