@@ -1,0 +1,17 @@
+/target/
+/node.toml
+/secrets.json
+/config/node.toml
+/config/secrets.json
+/generated/
+/releases/
+/exports/
+*.pem
+*.key
+*.log
+# Local deployment inventories, DNS exports and ACME/WARP credentials.
+/.local-deploy/
+**/cf-acme.env
+**/account.conf
+**/usque-config.json
+

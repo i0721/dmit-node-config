@@ -1,3 +1,5 @@
+> 部署教程见 [docs/deployment.md](docs/deployment.md)。本文中的域名示例已统一为 `dmit-***.yushulinfeng.com`；真实 DNS、证书与 WARP 操作请按教程顺序实施。
+
 > **裸机 Linux + systemd + Nginx + 原始 Xray Core + acme.sh + usque，完全抛弃 Docker / 3x-ui。**
 >
 > 443：XHTTP（你说的 SplitHTTP）80% + WS 15%  
@@ -85,37 +87,199 @@ SplitHTTP
 
 ---
 
+# 2.1 全局配置与配置生成设计
+
+项目采用 **一个全局配置源 + 独立密钥文件 + 模板生成**。下文各章节中的域名、端口、路径和服务配置是架构示例，不作为需要分别手工维护的配置源。本节记录设计要求；Rust `nodectl` 的实际命令、权限和部署顺序以 [README.md](README.md)、[完整部署教程](docs/deployment.md) 及当前模板为准。
+
+### 项目与主机目录
+
+```text
+dmit-node-config/
+├── config/node.example.toml       # 可提交的全局配置示例
+├── config/secrets.example.json    # 只有字段名的密钥示例
+├── schemas/                      # 字段、类型和关联约束
+├── templates/                    # Xray、Nginx、systemd、客户端模板
+└── nodectl                       # 初始化、渲染、检查、应用、回滚入口
+
+/etc/dmit-node/
+├── node.toml                     # 本机实际参数，root:root 0600
+└── secrets.json                  # 本机实际凭据，root:root 0600
+
+/var/lib/dmit-node/
+├── releases/<release-id>/        # 每次生成的完整配置快照
+├── current -> releases/...       # 当前已应用版本
+└── previous -> releases/...      # 上一个已应用版本
+```
+
+实际全局配置、凭据、生成目录及客户端导出均加入 `.gitignore`。生成文件头或旁边的清单标明来源与版本，日常修改统一回到 `node.toml`。模板随项目版本管理。
+
+### 全局参数示例
+
+使用 TOML 保存普通参数，字段按职责分组。以下值与本文后续示例对应：
+
+```toml
+schema_version = 1
+
+[node]
+domain = "dmit-qwq1.yushulinfeng.com"
+aliases = ["dmit-www.yushulinfeng.com"]
+reality_domain = "dmit-reality.yushulinfeng.com"
+ipv4 = "203.0.113.10"
+ipv6 = "2001:db8::10"             # 无 IPv6 时填空字符串，并省略 IPv6 监听与 IP SAN
+
+[ports]
+http = 80
+https = 443
+reality = 8443
+
+[transport.xhttp]
+path = "/assets/modules/6b91d4e8a37fc205/stream/"
+mode = "stream-one"
+socket = "/tmp/vless-xhttp.socket"
+
+[transport.ws]
+path = "/api/events/c84f20a7d693be51/channel"
+socket = "/tmp/vless-ws.socket"
+
+[transport.reality]
+path = "/assets/modules/a720d96c1e58fb34/stream/"
+mode = "stream-one"
+
+[tls]
+protocols = ["TLSv1.3"]
+http2 = true
+http3 = true
+alt_svc_max_age = 86400
+domain_cert_dir = "/etc/ssl/dmit/domain"
+ip_cert_dir = "/etc/ssl/dmit/ip"
+
+[website]
+root = "/var/www/html"
+
+[runtime]
+xray_binary = "/usr/local/bin/xray"
+nginx_binary = "/usr/sbin/nginx"
+usque_binary = "/usr/local/bin/usque"
+xray_user = "xray"
+nginx_user = "www-data"
+log_root = "/var/log"
+
+[clients]
+xhttp_weight = 80
+ws_weight = 15
+reality_weight = 5
+fingerprint_weights = { chrome = 5, ios = 2, firefox = 3, qq = 1 }
+
+[warp]
+enabled = true
+config_file = "/etc/usque/config.json"
+take_over_default_route = false
+```
+
+本版仅允许 `take_over_default_route = false`；填 `true` 时明确报错，后续路由接管需单独设计。`warp.enabled` 只控制 usque 服务是否启用，不隐式改变 Xray 出站。编译版本、下载地址与校验摘要由项目的版本锁定清单维护，常规配置应用不自动升级二进制。
+
+### 密钥与初始化
+
+`secrets.json` 使用以下结构，示例占位符不能通过上线校验：
+
+```json
+{
+  "xhttp_uuid": "XHTTP_UUID",
+  "ws_uuid": "WS_UUID",
+  "reality_uuid": "REALITY_UUID",
+  "reality_private_key": "REALITY_PRIVATE_KEY",
+  "reality_short_id": "REALITY_SHORT_ID"
+}
+```
+
+首次初始化生成三个不同 UUID、REALITY 密钥对、Short ID，以及三个不同的路径随机段；使用当前安装的 Xray 生成密钥，并派生公钥。公钥随客户端配置输出，不再手工维护第二份。初始化具有幂等性：再次运行不会重置已有凭据或路径，缺失字段才补齐；轮换必须显式指定字段。
+
+usque 注册结果继续保存在 `warp.config_file` 指定的文件中，作为独立凭据保管，普通渲染和应用不重新注册。证书私钥、REALITY 私钥和 WARP 凭据不进入客户端输出、变更预览或普通日志。客户端导出包含访问凭据，目录权限为 `0700`、文件为 `0600`。
+
+### 参数联动规则
+
+| 全局输入 | 自动生成或派生的内容 |
+| --- | --- |
+| `node.domain`、`aliases`、`reality_domain` | DNS 操作清单、域名证书申请参数、Nginx `server_name`、对应客户端 SNI |
+| `node.ipv4`、非空 `ipv6` | DNS 操作清单、IP 证书 SAN 申请参数、节点地址清单及地址族监听 |
+| `ports.https` | Nginx TCP/QUIC 监听、跳转 URL、Alt-Svc 端口、443 类客户端端口、REALITY 本地 target 端口 |
+| `ports.http`、`ports.reality` | HTTP 监听、REALITY 监听、对应检查命令及客户端端口 |
+| `transport.*.path` | Xray 入站、Nginx 对应路由、对应客户端路径；REALITY 直连路径仅生成到 Xray 与客户端 |
+| 两个 `socket` | Xray UDS 监听、Nginx upstream、权限检查清单 |
+| TLS 与证书目录 | Nginx TLS/H2/H3 开关、Alt-Svc、证书安装参数和客户端兼容性约束 |
+| 运行目录、用户、二进制位置 | 服务单元、日志位置、目录与权限创建清单 |
+| 客户端权重 | 客户端 Profile 分配清单，不生成服务端随机分流规则 |
+
+域名证书 SAN 清单由三个域名字段去重生成；IP 证书 SAN 清单由有效 IP 生成。REALITY `serverNames` 按本文现有 SAN 并集规则派生，客户端默认只用 `reality_domain`；TLS 客户端默认用 `node.domain`。`target` 固定派生为 `127.0.0.1:<ports.https>`，避免维护第二份端口。应用前必须核实实际证书覆盖所需 SAN；该设计不改变第 15 节中 REALITY 本地 target 的实验性质。
+
+Nginx、Xray 不直接读取 TOML，也不假设它们会展开环境变量。渲染器解析并验证类型后，使用 JSON 序列化生成 Xray 配置，使用严格模板生成 Nginx 与 systemd 配置。拒绝未知字段、换行及可注入配置语句的字符；禁止通过 `source`、`eval` 或全文件环境变量替换加载参数，以免误替换 Nginx 的 `$host`、`$uri` 等运行时变量。
+
+### 配置操作流程（设计接口）
+
+```text
+nodectl init                       # 首次创建本机配置与凭据，不覆盖已有值
+nodectl validate                   # 检查输入及关联约束
+nodectl render                     # 生成候选快照，不修改运行中的服务
+nodectl diff <release-id>           # 展示脱敏后的候选变更与受影响服务
+nodectl check <release-id>          # 使用实际安装的程序校验候选配置
+nodectl apply <release-id>          # 应用已校验的指定快照
+nodectl rollback                   # 恢复上一份成功版本并重新检查
+nodectl export-clients             # 导出当前成功应用版本的客户端配置
+```
+
+`validate` 至少检查：必填项、schema 版本、域名和 IP 格式、端口范围与监听冲突、三个 UUID 不同、密钥可解析、Short ID 格式、权重非负且总和为 100。路径必须是无查询参数的绝对多级 URL 路径，不含 `..`、协议名称或编码歧义；三个路径不同，XHTTP 路径以 `/` 结尾，WS 使用精确匹配。检查生成路由之间及与网站已有路由的冲突。检查 `tls.http3` 与 Alt-Svc 一致，以及客户端传输与 ALPN 兼容。
+
+`render` 在权限为 `0700` 的新快照目录中一次生成 Xray、Nginx、systemd、客户端与操作清单，附源配置摘要、模板版本和生成文件摘要。快照保存受保护的生成凭据，保留策略只保留有限个成功版本。渲染不签发证书、不修改 DNS、不重启服务；对相同输入产生相同有效配置，不重新随机化路径或密钥。
+
+`check` 针对候选文件运行 `xray run -test -config <候选文件>`、`nginx -t -c <候选文件>` 及 systemd 单元检查。模板的 include 必须指向同一候选快照，不能误读当前线上配置。还需检查证书存在、有效期与 SAN，以及服务用户对私钥、配置和 UDS 的实际访问权限。任一步失败即禁止应用。
+
+`apply` 使用进程锁，核对候选摘要和校验结果，切换前记录上一版本及受影响服务的启用/运行状态。初次安装时接入本文中的 `/etc/xray/config.json`、`/etc/nginx/nginx.conf` 等固定入口，指向当前快照；systemd 单元按生成清单安装。若这些入口已有非本项目管理的配置，先备份并生成接管差异，由显式的接管操作处理，不能静默覆盖。
+
+配置切换完成后，仅当单元改变时执行 daemon-reload；按受影响组件执行 Xray 重启、Nginx reload，必要时重启监听参数发生变化的服务。usque 仅在其配置或启用状态改变时处理。证书续期成功后只校验并 reload Nginx。每次应用检查服务状态、监听、UDS 和三类客户端握手；握手检查使用明确指定版本的参考客户端，缺少检查能力时标记未通过，不虚报成功。
+
+多服务更新不能承诺同时生效，应用期间可能短暂断连。任何阶段失败都恢复上一版本入口、单元和服务状态，重新执行校验与健康检查；回滚仍失败时明确报告现场状态和恢复路径，不更新成功版本标记。第一次部署没有上一版本时恢复部署前状态。默认客户端导出始终来自最近成功应用的版本，防止导出尚未生效的路径或凭据。
+
+### 实现验收要求
+
+- 修改一个路径，生成的服务端、Nginx 和对应客户端同步变化；旧路径消失，其他入口不变。
+- 修改 HTTPS 端口，监听、Alt-Svc、REALITY target、客户端与检查清单全部同步。
+- 初始化、渲染重复执行不改变已有凭据；公钥始终与私钥匹配。
+- 候选校验失败不改变线上服务；应用中途失败可恢复上一版，并能检测回滚失败。
+- 示例占位符、未知字段、路由冲突和凭据泄露检查均阻止有问题的配置上线。
+
+---
+
 # 3. DNS
 
 假设：
 
 ```text
 主域：
-example.com
+dmit-qwq1.yushulinfeng.com
 
 REALITY SNI：
-reality.example.com
+dmit-reality.yushulinfeng.com
 ```
 
 那么：
 
 ```text
-@       A     DMIT IPv4
-www     A     DMIT IPv4
+dmit-qwq1    A     DMIT IPv4
+dmit-www     A     DMIT IPv4
 
-@       AAAA  DMIT IPv6
-www     AAAA  DMIT IPv6
+dmit-qwq1    AAAA  DMIT IPv6
+dmit-www     AAAA  DMIT IPv6
 
-reality A     DMIT IPv4
-reality AAAA  DMIT IPv6
+dmit-reality A     DMIT IPv4
+dmit-reality AAAA  DMIT IPv6
 ```
 
 也就是说：
 
 ```text
-example.com
-www.example.com
-reality.example.com
+dmit-qwq1.yushulinfeng.com
+dmit-www.yushulinfeng.com
+dmit-reality.yushulinfeng.com
 ```
 
 全部直接指向 **你自己的 DMIT IP**。
@@ -131,9 +295,9 @@ reality.example.com
 至少：
 
 ```text
-DNS:example.com
-DNS:www.example.com
-DNS:reality.example.com
+DNS:dmit-qwq1.yushulinfeng.com
+DNS:dmit-www.yushulinfeng.com
+DNS:dmit-reality.yushulinfeng.com
 ```
 
 使用：
@@ -150,9 +314,9 @@ acme.sh 对 `ec-384` 有原生支持。[GitHub](https://github.com/acmesh-offici
 acme.sh --issue \
   --server letsencrypt \
   --dns dns_cf \
-  -d example.com \
-  -d www.example.com \
-  -d reality.example.com \
+  -d dmit-qwq1.yushulinfeng.com \
+  -d dmit-www.yushulinfeng.com \
+  -d dmit-reality.yushulinfeng.com \
   --keylength ec-384
 ```
 
@@ -187,8 +351,8 @@ IP证书
 和普通：
 
 ```text
-example.com
-www.example.com
+dmit-qwq1.yushulinfeng.com
+dmit-www.yushulinfeng.com
 ```
 
 证书混成一张。
@@ -205,7 +369,7 @@ www.example.com
 │   ├── fullchain.pem
 │   └── privkey.pem
 │
-└── ipssl/
+└── ip/
     ├── fullchain.pem
     └── privkey.pem
 ```
@@ -214,12 +378,12 @@ www.example.com
 
 ```text
 domain/fullchain.pem
-├── example.com
-├── www.example.com
-└── reality.example.com
+├── dmit-qwq1.yushulinfeng.com
+├── dmit-www.yushulinfeng.com
+└── dmit-reality.yushulinfeng.com
 
 
-ipssl/fullchain.pem
+ip/fullchain.pem
 ├── DMIT IPv4
 └── DMIT IPv6
 ```
@@ -235,9 +399,9 @@ ipssl/fullchain.pem
 逻辑上就是：
 
 ```text
-example.com
-www.example.com
-reality.example.com
+dmit-qwq1.yushulinfeng.com
+dmit-www.yushulinfeng.com
+dmit-reality.yushulinfeng.com
 DMIT IPv4
 DMIT IPv6
 ```
@@ -252,13 +416,13 @@ Xray 当前 TLS 文档明确说明：如果客户端 `serverName` 填 IP，TLS C
 
 ```text
 Profile A
-serverName = example.com
+serverName = dmit-qwq1.yushulinfeng.com
 ```
 
 发送：
 
 ```text
-SNI: example.com
+SNI: dmit-qwq1.yushulinfeng.com
 ```
 
 而：
@@ -446,7 +610,7 @@ openssl rand -hex 8
 | XHTTP（443） | `/assets/modules/6b91d4e8a37fc205/stream/` |
 | WS（443） | `/api/events/c84f20a7d693be51/channel` |
 
-部署时分别运行一次 `openssl rand -hex 8`，用生成的值替换上表中的两个随机段，并同步替换下文 **Xray、Nginx 和客户端 Profile** 的对应路径。XHTTP 路径末尾的 `/` 也要保持一致。这些是 URL 路由，不需要在网站目录下创建对应的文件或文件夹；普通网站内容仍由原来的 `location /` 处理。路径命名只用于减少明显的协议标识，不替代认证。
+路径由第 2.1 节的全局配置统一维护，初始化时生成随机段；后续只修改 `transport.xhttp.path` 或 `transport.ws.path`，由渲染器同步生成 **Xray、Nginx 和客户端 Profile**，不再逐处手工替换。XHTTP 路径末尾的 `/` 保持一致。这些是 URL 路由，不需要在网站目录下创建对应的文件或文件夹；普通网站内容仍由原来的 `location /` 处理。路径命名只用于减少明显的协议标识，不替代认证。
 
 `/etc/xray/config.json`
 
@@ -534,7 +698,7 @@ openssl rand -hex 8
         "network": "xhttp",
 
         "xhttpSettings": {
-          "path": "/reality",
+          "path": "/assets/modules/a720d96c1e58fb34/stream/",
           "mode": "stream-one"
         },
 
@@ -548,9 +712,9 @@ openssl rand -hex 8
           "xver": 0,
 
           "serverNames": [
-            "example.com",
-            "www.example.com",
-            "reality.example.com",
+            "dmit-qwq1.yushulinfeng.com",
+            "dmit-www.yushulinfeng.com",
+            "dmit-reality.yushulinfeng.com",
             "203.0.113.10",
             "2001:db8::10"
           ],
@@ -730,7 +894,7 @@ mkdir -p \
     /var/www/html \
     /var/www/acme \
     /etc/ssl/dmit/domain \
-    /etc/ssl/dmit/ipssl
+    /etc/ssl/dmit/ip
 ```
 
 网站：
@@ -857,10 +1021,10 @@ http {
 
 
         ssl_certificate
-            /etc/ssl/dmit/ipssl/fullchain.pem;
+            /etc/ssl/dmit/ip/fullchain.pem;
 
         ssl_certificate_key
-            /etc/ssl/dmit/ipssl/privkey.pem;
+            /etc/ssl/dmit/ip/privkey.pem;
 
 
         add_header Alt-Svc
@@ -885,9 +1049,9 @@ http {
     # ==================================================
     # 443 MAIN DOMAIN
     #
-    # example.com
-    # www.example.com
-    # reality.example.com
+    # dmit-qwq1.yushulinfeng.com
+    # dmit-www.yushulinfeng.com
+    # dmit-reality.yushulinfeng.com
     # ==================================================
 
     server {
@@ -903,9 +1067,9 @@ http {
 
 
         server_name
-            example.com
-            www.example.com
-            reality.example.com;
+            dmit-qwq1.yushulinfeng.com
+            dmit-www.yushulinfeng.com
+            dmit-reality.yushulinfeng.com;
 
 
         ssl_certificate
@@ -1068,7 +1232,7 @@ listen 443 quic;
 server {
     listen 443 ssl default_server;
     ...
-    ssl_certificate /etc/ssl/dmit/ipssl/fullchain.pem;
+    ssl_certificate /etc/ssl/dmit/ip/fullchain.pem;
     ...
 }
 ```
@@ -1088,9 +1252,9 @@ IPSSL
 以及：
 
 ```text
-https://random.example.net
+https://dmit-unknown.yushulinfeng.com
         ↓
-SNI = random.example.net
+SNI = dmit-unknown.yushulinfeng.com
         ↓
 没有匹配 server_name
         ↓
@@ -1102,9 +1266,9 @@ IPSSL
 而：
 
 ```text
-example.com
-www.example.com
-reality.example.com
+dmit-qwq1.yushulinfeng.com
+dmit-www.yushulinfeng.com
+dmit-reality.yushulinfeng.com
 ```
 
 则进入域名证书对应的虚拟主机。
@@ -1287,7 +1451,7 @@ Nginx 官方 HTTP/3 本身就是 QUIC/UDP，因此你要求 H3 就必然需要 U
 
 ```text
 Address:
-example.com
+dmit-qwq1.yushulinfeng.com
 
 Port:
 443
@@ -1311,7 +1475,7 @@ Security:
 TLS
 
 SNI:
-example.com
+dmit-qwq1.yushulinfeng.com
 ```
 
 ALPN：
@@ -1382,7 +1546,7 @@ Xray 官方对此明确提醒，其他行为仍然可能保持 Go/Xray 自身特
 
 ```text
 Address:
-example.com
+dmit-qwq1.yushulinfeng.com
 
 Port:
 443
@@ -1403,7 +1567,7 @@ Security:
 TLS
 
 SNI:
-example.com
+dmit-qwq1.yushulinfeng.com
 
 ALPN:
 http/1.1
@@ -1440,8 +1604,11 @@ XHTTP
 Security:
 REALITY
 
+Path:
+/assets/modules/a720d96c1e58fb34/stream/
+
 SNI:
-reality.example.com
+dmit-reality.yushulinfeng.com
 
 PublicKey:
 REALITY_PUBLIC_KEY
@@ -1457,10 +1624,10 @@ chrome
 
 ```text
 443:
-example.com / www.example.com
+dmit-qwq1.yushulinfeng.com / dmit-www.yushulinfeng.com
 
 8443:
-reality.example.com
+dmit-reality.yushulinfeng.com
 ```
 
 不要让两个入口使用相同的主 SNI。
@@ -1468,11 +1635,11 @@ reality.example.com
 而：
 
 ```text
-example.com
-www.example.com
+dmit-qwq1.yushulinfeng.com
+dmit-www.yushulinfeng.com
 ```
 
-仍然视为同一个主域的两个 DNS 名称。
+仍然作为同一个 TLS 入口的主域与别名使用。
 
 ---
 
@@ -1488,17 +1655,17 @@ Server
 Client Profile
     ↓
 决定具体使用：
-example.com
-www.example.com
-reality.example.com
+dmit-qwq1.yushulinfeng.com
+dmit-www.yushulinfeng.com
+dmit-reality.yushulinfeng.com
 或者 IP Profile
 ```
 
 服务端不要人为：
 
 ```text
-今天 example.com
-明天 www.example.com
+今天 dmit-qwq1.yushulinfeng.com
+明天 dmit-www.yushulinfeng.com
 随机 SNI
 ```
 
@@ -1844,13 +2011,17 @@ UDS         UDS     │
 
 ```text
 [ ] DMIT IPv4 / IPv6 都是自己的
-[ ] @ → DMIT
-[ ] www → DMIT
-[ ] reality → DMIT
+[ ] 全局参数只在 /etc/dmit-node/node.toml 维护
+[ ] 密钥文件、生成快照、客户端导出不入库且权限正确
+[ ] Xray / Nginx / systemd / 客户端由同一候选快照生成
+[ ] 候选校验、变更预览、健康检查与失败回滚已验证
+[ ] dmit-qwq1 → DMIT
+[ ] dmit-www → DMIT
+[ ] dmit-reality → DMIT
 
 [ ] 没有使用第三方证书
 [ ] 没有盗用其他 IP 的证书
-[ ] 域名证书包含 @ + www
+[ ] 域名证书包含 dmit-qwq1 + dmit-www
 [ ] 域名证书使用 EC P-384
 [ ] IPSSL SAN 包含 IPv4 + IPv6
 
@@ -1869,7 +2040,7 @@ UDS         UDS     │
 [ ] REALITY target = 127.0.0.1:443
 
 [ ] 443 主 SNI ≠ 8443 主 SNI
-[ ] @ / www 视为同一主域
+[ ] dmit-qwq1 / dmit-www 视为同一 TLS 入口
 [ ] REALITY serverNames 按两套证书 SAN 逻辑并集
 [ ] IP 不当成普通 TLS SNI
 

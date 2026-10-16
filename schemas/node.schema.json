@@ -1,0 +1,322 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Config",
+  "type": "object",
+  "required": [
+    "clients",
+    "node",
+    "ports",
+    "runtime",
+    "schema_version",
+    "tls",
+    "transport",
+    "warp",
+    "website"
+  ],
+  "properties": {
+    "clients": {
+      "$ref": "#/definitions/Clients"
+    },
+    "node": {
+      "$ref": "#/definitions/Node"
+    },
+    "ports": {
+      "$ref": "#/definitions/Ports"
+    },
+    "runtime": {
+      "$ref": "#/definitions/Runtime"
+    },
+    "schema_version": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0.0
+    },
+    "tls": {
+      "$ref": "#/definitions/Tls"
+    },
+    "transport": {
+      "$ref": "#/definitions/Transport"
+    },
+    "warp": {
+      "$ref": "#/definitions/Warp"
+    },
+    "website": {
+      "$ref": "#/definitions/Website"
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "Clients": {
+      "type": "object",
+      "required": [
+        "fingerprint_weights",
+        "reality_weight",
+        "ws_weight",
+        "xhttp_weight"
+      ],
+      "properties": {
+        "fingerprint_weights": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0.0
+          }
+        },
+        "reality_weight": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "ws_weight": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "xhttp_weight": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "Node": {
+      "type": "object",
+      "required": [
+        "aliases",
+        "domain",
+        "ipv4",
+        "ipv6",
+        "reality_domain"
+      ],
+      "properties": {
+        "aliases": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "domain": {
+          "type": "string"
+        },
+        "ipv4": {
+          "type": "string"
+        },
+        "ipv6": {
+          "type": "string"
+        },
+        "reality_domain": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Ports": {
+      "type": "object",
+      "required": [
+        "http",
+        "https",
+        "reality"
+      ],
+      "properties": {
+        "http": {
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0.0
+        },
+        "https": {
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0.0
+        },
+        "reality": {
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "Reality": {
+      "type": "object",
+      "required": [
+        "mode",
+        "path"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Runtime": {
+      "type": "object",
+      "required": [
+        "log_root",
+        "nginx_binary",
+        "nginx_user",
+        "usque_binary",
+        "xray_binary",
+        "xray_user"
+      ],
+      "properties": {
+        "log_root": {
+          "type": "string"
+        },
+        "nginx_binary": {
+          "type": "string"
+        },
+        "nginx_user": {
+          "type": "string"
+        },
+        "usque_binary": {
+          "type": "string"
+        },
+        "xray_binary": {
+          "type": "string"
+        },
+        "xray_user": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Tls": {
+      "type": "object",
+      "required": [
+        "alt_svc_max_age",
+        "domain_cert_dir",
+        "http2",
+        "http3",
+        "ip_cert_dir",
+        "protocols"
+      ],
+      "properties": {
+        "alt_svc_max_age": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "domain_cert_dir": {
+          "type": "string"
+        },
+        "http2": {
+          "type": "boolean"
+        },
+        "http3": {
+          "type": "boolean"
+        },
+        "ip_cert_dir": {
+          "type": "string"
+        },
+        "protocols": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "Transport": {
+      "type": "object",
+      "required": [
+        "reality",
+        "ws",
+        "xhttp"
+      ],
+      "properties": {
+        "reality": {
+          "$ref": "#/definitions/Reality"
+        },
+        "ws": {
+          "$ref": "#/definitions/Ws"
+        },
+        "xhttp": {
+          "$ref": "#/definitions/Xhttp"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Warp": {
+      "type": "object",
+      "required": [
+        "config_file",
+        "enabled",
+        "take_over_default_route"
+      ],
+      "properties": {
+        "config_file": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "take_over_default_route": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Website": {
+      "type": "object",
+      "required": [
+        "root"
+      ],
+      "properties": {
+        "reserved_paths": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "root": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Ws": {
+      "type": "object",
+      "required": [
+        "path",
+        "socket"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "socket": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Xhttp": {
+      "type": "object",
+      "required": [
+        "mode",
+        "path",
+        "socket"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "socket": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

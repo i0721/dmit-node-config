@@ -1,0 +1,59 @@
+schema_version = 1
+
+[node]
+# Tutorial names in docs/deployment.md; replace documentation IPs before apply.
+domain = "dmit-qwq1.yushulinfeng.com"
+aliases = ["dmit-www.yushulinfeng.com"]
+reality_domain = "dmit-reality.yushulinfeng.com"
+ipv4 = "203.0.113.10"
+ipv6 = "2001:db8::10"
+
+[ports]
+http = 80
+https = 443
+reality = 8443
+
+[transport.xhttp]
+path = "/assets/modules/6b91d4e8a37fc205/stream/"
+mode = "stream-one"
+socket = "/tmp/vless-xhttp.socket"
+
+[transport.ws]
+path = "/api/events/c84f20a7d693be51/channel"
+socket = "/tmp/vless-ws.socket"
+
+[transport.reality]
+path = "/assets/modules/a720d96c1e58fb34/stream/"
+mode = "stream-one"
+
+[tls]
+protocols = ["TLSv1.3"]
+http2 = true
+http3 = true
+alt_svc_max_age = 86400
+domain_cert_dir = "/etc/ssl/dmit/domain"
+ip_cert_dir = "/etc/ssl/dmit/ip"
+
+[website]
+root = "/var/www/html"
+# Explicit existing routes, in addition to checking files below root on Linux.
+reserved_paths = ["/.well-known/"]
+
+[runtime]
+xray_binary = "/usr/local/bin/xray"
+nginx_binary = "/usr/sbin/nginx"
+usque_binary = "/usr/local/bin/usque"
+xray_user = "xray"
+nginx_user = "www-data"
+log_root = "/var/log"
+
+[clients]
+xhttp_weight = 80
+ws_weight = 15
+reality_weight = 5
+fingerprint_weights = { chrome = 5, ios = 2, firefox = 3, qq = 1 }
+
+[warp]
+enabled = true
+config_file = "/etc/usque/config.json"
+take_over_default_route = false

@@ -1,0 +1,28 @@
+# No implicit downloads or upgrades. Cargo.lock pins all Rust dependencies.
+# check records SHA256 of installed executables. apply refuses changed files.
+[xray]
+repository = "https://github.com/XTLS/Xray-core"
+version = "26.10.10"
+ref = "v26.10.10"
+linux_amd64_url = "https://github.com/XTLS/Xray-core/releases/download/v26.10.10/Xray-linux-64.zip"
+linux_amd64_archive_sha256 = "72a5fde819713a103c6fc26a87aa025c1518c918a34eba4bc38d64dc0728e5d9"
+
+[nginx]
+repository = "https://github.com/nginx/nginx"
+required_features = ["TLSv1.3", "http_v2", "http_v3"]
+pin_policy = "installed-sha256-in-check-receipt"
+
+[usque]
+repository = "https://github.com/Diniboy1123/usque"
+version = "4.2.1"
+ref = "v4.2.1"
+source_commit = "6aa03fc97d12848dce34eedbd187fb1077b5d1ea"
+required_mode = "nativetun"
+pin_policy = "installed-sha256-in-check-receipt"
+
+[acme]
+repository = "https://github.com/acmesh-official/acme.sh"
+version = "3.1.6"
+ref = "3.1.6"
+source_commit = "807da6498377ee5e0cf43a78091f46f12dc59a89"
+policy = "operator-provisioned; never executed by render/apply"

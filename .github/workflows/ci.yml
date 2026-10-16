@@ -1,0 +1,33 @@
+name: Rust checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --check
+      - run: cargo test --locked
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo run --locked -- schema > /tmp/node.schema.json && diff -u schemas/node.schema.json /tmp/node.schema.json
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories licenses sources
+      - name: Verify official Xray compatibility
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, pathlib, tomllib, urllib.request, zipfile
+          lock = tomllib.loads(pathlib.Path('versions.lock.toml').read_text())['xray']
+          archive = pathlib.Path('/tmp/nodectl-xray.zip')
+          urllib.request.urlretrieve(lock['linux_amd64_url'], archive)
+          assert hashlib.sha256(archive.read_bytes()).hexdigest() == lock['linux_amd64_archive_sha256']
+          with zipfile.ZipFile(archive) as package:
+              pathlib.Path('/tmp/nodectl-xray').write_bytes(package.read('xray'))
+          pathlib.Path('/tmp/nodectl-xray').chmod(0o700)
+          PY
+          XRAY_TEST_BINARY=/tmp/nodectl-xray cargo test --locked upstream_xray_accepts -- --ignored
