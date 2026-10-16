@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 — Unreleased
+## 0.2.0 — 2026-10-16
 
 - 新增带精确版本、Sigstore 签名和摘要检查的安装器及工具升级入口。
 - 新增 doctor/status、可预览的交互/非交互 setup、显式 schema 兼容检查。
