@@ -45,6 +45,25 @@ fn json_file(files: &BTreeMap<String, Vec<u8>>, name: &str) -> Value {
 }
 
 #[test]
+fn legacy_snapshot_requires_complete_regeneration_and_known_generator() {
+    let (_tmp, store) = sandbox();
+    let id = store.render().unwrap();
+    let mut path = store.release(&id).unwrap();
+    for (version, expected) in [("0.1.0", true), ("99.0.0", false)] {
+        let mut manifest: Value =
+            serde_json::from_slice(&fs::read(path.join("manifest.json")).unwrap()).unwrap();
+        manifest["generator_version"] = json!(version);
+        let bytes = serde_json::to_vec_pretty(&manifest).unwrap();
+        let next = store::digest(&bytes)[..32].to_owned();
+        store::atomic_write(&path.join("manifest.json"), &bytes).unwrap();
+        let destination = store.release(&next).unwrap();
+        fs::rename(&path, &destination).unwrap();
+        assert_eq!(store.verify(&next).is_ok(), expected);
+        path = destination;
+    }
+}
+
+#[test]
 fn rejects_unknown_fields_at_every_level() {
     let (c, s) = fixture();
     for field in [

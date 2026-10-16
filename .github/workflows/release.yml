@@ -1,0 +1,96 @@
+name: Verified release
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  quality:
+    uses: ./.github/workflows/ci.yml
+    # System integration is checked on the source PR; release builds rerun
+    # unit/security gates and both native archive self-tests without duplicating it.
+    with: {run_integration: false}
+    secrets: inherit
+  build:
+    needs: quality
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: ubuntu-24.04, target: x86_64-unknown-linux-gnu}
+          - {runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {fetch-depth: 0}
+      - name: Build and run tests natively against Debian 12 glibc baseline
+        run: |
+          docker build --build-arg BASE=debian:12 -f tests/integration/Dockerfile -t nodectl-release-build .
+          mkdir -p dist
+          docker run --rm --entrypoint /bin/bash -e SOURCE_COMMIT="$(git rev-parse HEAD)" -e SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" -v "$PWD/dist:/work/dist" nodectl-release-build scripts/release-package.sh '${{ matrix.target }}'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-${{ matrix.target }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {fetch-depth: 0}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: {pattern: 'release-*', merge-multiple: true, path: dist}
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+        with: {cosign-release: 'v3.1.3'}
+      - name: Prepare signed manifest
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(python3 -c 'import tomllib;print(tomllib.load(open("Cargo.toml","rb"))["package"]["version"])')
+          test "$TAG" = "v$version"
+          test -f "docs/releases/$TAG.md"
+          cp install.sh LICENSE THIRD_PARTY.md "docs/releases/$TAG.md" dist/
+          cd dist
+          sha256sum ./*.tar.gz install.sh LICENSE THIRD_PARTY.md "$TAG.md" | sed 's#  ./#  #' > SHA256SUMS
+          cosign sign-blob --yes --bundle SHA256SUMS.sigstore.json SHA256SUMS
+          cosign verify-blob --bundle SHA256SUMS.sigstore.json --certificate-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@refs/tags/$TAG" --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
+          sha256sum -c SHA256SUMS
+      - name: Sign isolated wrong-architecture and failing-binary test fixtures
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          fixtures="$RUNNER_TEMP/nodectl-negative"
+          mkdir -p "$fixtures/wrong-arch" "$fixtures/failing-binary" "$fixtures/payload"
+          archive="nodectl-$TAG-x86_64-unknown-linux-gnu.tar.gz"
+          cp "dist/nodectl-$TAG-aarch64-unknown-linux-gnu.tar.gz" "$fixtures/wrong-arch/$archive"
+          cp /bin/false "$fixtures/payload/nodectl"
+          tar -C "$fixtures/payload" -czf "$fixtures/failing-binary/$archive" nodectl
+          for kind in wrong-arch failing-binary; do
+            (cd "$fixtures/$kind"; sha256sum "$archive" > SHA256SUMS; cosign sign-blob --yes --bundle SHA256SUMS.sigstore.json SHA256SUMS)
+          done
+      - name: Exercise real signed install and upgrade failure gates
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/nodectl-legacy"
+          git archive 0a95befa777895dfdc544a6577bf56a3ff82014a | tar -x -C "$RUNNER_TEMP/nodectl-legacy"
+          cargo build --locked --manifest-path "$RUNNER_TEMP/nodectl-legacy/Cargo.toml" --target-dir "$RUNNER_TEMP/nodectl-legacy-target"
+          sudo env PATH="$PATH" bash scripts/test-installer.sh dist "$TAG" /opt/nodectl-release-test "$RUNNER_TEMP/nodectl-negative" "$RUNNER_TEMP/nodectl-legacy-target/debug/nodectl"
+      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with: {subject-path: 'dist/*'}
+      - name: Publish only verified assets and verify uploaded provenance
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" dist/* --verify-tag --draft --title "nodectl $TAG" --notes-file "docs/releases/$TAG.md"
+          for archive in dist/*tar.gz; do gh attestation verify "$archive" --repo "$GITHUB_REPOSITORY"; done
+          gh release edit "$TAG" --draft=false

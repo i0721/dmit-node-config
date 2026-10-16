@@ -1,0 +1,21 @@
+name: Deployment failure
+description: Diagnose an installation or lifecycle failure
+body:
+  - type: input
+    id: environment
+    attributes: {label: Version, OS, architecture, new host or existing services}
+    validations: {required: true}
+  - type: textarea
+    id: failure
+    attributes: {label: Failing command, sanitized diagnostic names and last successful step}
+    validations: {required: true}
+  - type: textarea
+    id: recovery
+    attributes: {label: transaction/uninstall journal present, original services and attempted recovery; omit raw journal contents}
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Evidence
+      options:
+        - label: I retained the original backups and removed all credentials from this report.
+          required: true

@@ -2,7 +2,7 @@
 
 核对日期：2026-10-16。本文对应仓库当前 `nodectl`、[全局配置示例](../config/node.example.toml) 和 [版本锁定清单](../versions.lock.toml)。默认环境为一台全新的 Debian 12/13、Linux amd64、systemd 主机；Ubuntu 用户使用对应的软件源。已有服务的主机先按第 1 节盘点，不能直接当新机器覆盖。
 
-配套资源：[截图与图解导航](visual-guide.md) · [部署记录模板](resources/deployment-record.template.md)。截图为 Cloudflare 的真实未提交表单，流程图为示意图，均在对应步骤说明状态；实际服务器验收仍需执行本文命令。
+配套资源：[通用图解](visual-guide.md) · [部署记录模板](resources/deployment-record.template.md)。图解为工程示意，实际服务器必须执行验收。首次使用优先阅读 [快速开始](getting-started.md)，本页保留完整参考步骤。
 
 ## 目录与执行顺序
 
@@ -33,13 +33,13 @@
 
 | 用途 | 完整域名 | Cloudflare「名称」字段 | 对应参数 |
 | --- | --- | --- | --- |
-| TLS 主入口、网站、默认客户端地址 | `dmit-qwq1.yushulinfeng.com` | `dmit-qwq1` | `node.domain` |
-| 同一 TLS 入口的别名 | `dmit-www.yushulinfeng.com` | `dmit-www` | `node.aliases` |
-| REALITY 默认 SNI | `dmit-reality.yushulinfeng.com` | `dmit-reality` | `node.reality_domain` |
+| TLS 主入口、网站、默认客户端地址 | `dmit-qwq1.example.com` | `dmit-qwq1` | `node.domain` |
+| 同一 TLS 入口的别名 | `dmit-www.example.com` | `dmit-www` | `node.aliases` |
+| REALITY 默认 SNI | `dmit-reality.example.com` | `dmit-reality` | `node.reality_domain` |
 
-以上均为 `yushulinfeng.com` 下的 `dmit-` 前缀子域。这里不使用根域 `@`、已有 `www` 或通配域接管其他业务。三个域名都指向同一台 DMIT；REALITY 的客户端 SNI 与 TLS 主 SNI 分开，但服务端本地 target 始终从 HTTPS 端口派生为 `127.0.0.1:443`。
+以上均为 `example.com` 下的 `dmit-` 前缀子域。这里不使用根域 `@`、已有 `www` 或通配域接管其他业务。三个域名都指向同一台 DMIT；REALITY 的客户端 SNI 与 TLS 主 SNI 分开，但服务端本地 target 始终从 HTTPS 端口派生为 `127.0.0.1:443`。
 
-2026-10-16 只读查看已登录的 Cloudflare 控制台时，确认该 zone 显示「DNS 设置：完全」，已有 `dmit-qwq1` 的 A 记录，代理状态为「仅 DNS」。`dmit-www`、`dmit-reality` 在当时列表中未出现。本次编写教程没有新增记录、修改 IP、创建 Token 或签发证书。现有 A 记录的地址不等于已验证的服务器归属；部署时仍以 DMIT 控制台及服务器网卡信息核对。
+本教程仅使用 example.com 等通用示例，不记录实际账户、已有 DNS 状态或服务器信息。部署时必须根据自己的控制台与网卡核对地址、归属及已有业务。
 
 ### 1.2 三种 Cloudflare 能力分别配置
 
@@ -75,9 +75,9 @@ systemctl status nginx xray usque-warp --no-pager || true
 下文命令在服务器的同一个 root Bash 会话中按顺序运行；遇到未处理的错误会退出这层 Bash，应先解决错误，不继续粘贴后面的命令。变量会被后续步骤复用。重新登录/进入 Bash 后，重新设置普通变量，Token 用隐藏输入再次读取。真实 IP、邮箱、Zone ID 留在主机的私密记录中，不提交仓库。
 
 ```bash
-export DMIT_DOMAIN='dmit-qwq1.yushulinfeng.com'
-export DMIT_ALIAS='dmit-www.yushulinfeng.com'
-export DMIT_REALITY='dmit-reality.yushulinfeng.com'
+export DMIT_DOMAIN='dmit-qwq1.example.com'
+export DMIT_ALIAS='dmit-www.example.com'
+export DMIT_REALITY='dmit-reality.example.com'
 read -r -p 'DMIT 实际公网 IPv4: ' DMIT_IPV4
 read -r -p 'DMIT 实际公网 IPv6，无则直接回车: ' DMIT_IPV6
 read -r -p 'ACME 联系邮箱: ' ACME_EMAIL
@@ -90,11 +90,11 @@ export DMIT_IPV4 DMIT_IPV6 ACME_EMAIL
 
 ### 2.1 先确认权威 DNS
 
-在 Cloudflare 选择 `yushulinfeng.com`，进入 DNS → 记录。若 zone 尚未完成接入，在注册商处使用 Cloudflare 分配给这个 zone 的名称服务器；不要照抄其他账户的 NS。检查：
+在 Cloudflare 选择 `example.com`，进入 DNS → 记录。若 zone 尚未完成接入，在注册商处使用 Cloudflare 分配给这个 zone 的名称服务器；不要照抄其他账户的 NS。检查：
 
 ```bash
-dig +short NS yushulinfeng.com
-dig +trace NS yushulinfeng.com
+dig +short NS example.com
+dig +trace NS example.com
 ```
 
 DNS 记录表中手工添加的根域 NS 不等同于注册商的权威委派；以注册商设置、zone 状态和公开查询结果共同核实。迁移涉及原有 DNSSEC/DS 时，按 Cloudflare 的 [名称服务器接入说明](https://developers.cloudflare.com/dns/zone-setups/full-setup/setup/) 完成衔接，避免出现验证失败。已正常接入的 zone 不要为了本教程重新修改整域 NS、DNSSEC 或邮箱记录。
@@ -116,7 +116,7 @@ DNS 记录表中手工添加的根域 NS 不等同于注册商的权威委派；
 
 下面是 `dmit-www` 的真实 A 记录草稿。IPv4 留空、尚未保存；部署时填写自己的地址，确认灰云 **仅 DNS** 后再保存。另两条 A 记录按表格分别处理。
 
-![Cloudflare A 记录草稿：dmit-www，IPv4 留空，代理状态为仅 DNS，尚未提交](assets/deployment/cloudflare-dns-a-draft.jpg)
+[通用操作图解](visual-guide.md)
 
 IPv6 对应的 AAAA 表单见 [图 2](visual-guide.md#图-2可选-ipv6-aaaa-记录)。没有公网 IPv6 就不创建该记录。
 
@@ -131,7 +131,7 @@ for name in "$DMIT_DOMAIN" "$DMIT_ALIAS" "$DMIT_REALITY"; do
   dig +short AAAA "$name" @1.1.1.1
   dig +short CAA "$name" @1.1.1.1
 done
-dig +short CAA yushulinfeng.com @1.1.1.1
+dig +short CAA example.com @1.1.1.1
 ```
 
 A 必须返回自己的 DMIT IPv4；配置 IPv6 时 AAAA 也必须正确。没有 IPv6 时不要遗留旧 AAAA。DNS 缓存未过期时，同时向权威服务器查询确认，不要用反复修改记录来“刷新”。若已有 CAA 限制签发机构，确认对三个子域生效的策略允许 `letsencrypt.org`；不存在 CAA 时无须专门新增。不要删除其他业务的 CAA 或邮件 TXT。[CAA 字段说明](https://developers.cloudflare.com/dns/manage-dns-records/reference/dns-record-types/#caa)
@@ -144,13 +144,13 @@ Cloudflare 右上角用户菜单 → My Profile/我的个人资料 → API Token
 
 模板选择入口见 [图 3](visual-guide.md#图-3dns-token-模板入口)。以下权限草稿仅演示设置，拍摄后已退出，没有生成实际 Token。
 
-![Cloudflare Token 草稿：DNS 编辑、区域读取，资源范围为特定区域 yushulinfeng.com](assets/deployment/cloudflare-token-permissions-draft.jpg)
+[通用操作图解](visual-guide.md)
 
 | 配置项 | 值 |
 | --- | --- |
-| 名称 | `dmit-acme-yushulinfeng` |
+| 名称 | `dmit-acme-example` |
 | 权限 | Zone → DNS → Edit；Zone → Zone → Read |
-| Zone Resources | Include → Specific zone → `yushulinfeng.com` |
+| Zone Resources | Include → Specific zone → `example.com` |
 | 其他账户/zone 权限 | 不授予 |
 | Client IP 过滤 | 可选；启用时需覆盖服务器实际访问 Cloudflare API 的出口 IPv4/IPv6 |
 | 到期时间 | 结合续期安排设置，到期前更新服务器凭据 |
@@ -162,7 +162,7 @@ Cloudflare 右上角用户菜单 → My Profile/我的个人资料 → API Token
 ```bash
 read -r -s -p 'Cloudflare DNS API Token: ' CF_Token
 printf '\n'
-read -r -p 'yushulinfeng.com 的 Zone ID: ' CF_Zone_ID
+read -r -p 'example.com 的 Zone ID: ' CF_Zone_ID
 read -r -p '该 zone 所属 Account ID: ' CF_Account_ID
 export CF_Token CF_Zone_ID CF_Account_ID
 ```
@@ -182,7 +182,7 @@ printf 'Authorization: Bearer %s\n' "$CF_Token" |
 printf 'Authorization: Bearer %s\n' "$CF_Token" |
   curl --fail --silent --show-error --header @- \
     "https://api.cloudflare.com/client/v4/zones/$CF_Zone_ID" |
-  jq -e '.success == true and .result.name == "yushulinfeng.com"'
+  jq -e '.success == true and .result.name == "example.com"'
 ```
 
 第一项只说明 Token 有效；第二项检查是否能读取正确 zone。DNS Edit 权限最终由 DNS-01 申请过程中创建/清理 TXT 验证。acme.sh 的 `dns_cf` 使用 `CF_Token`、`CF_Zone_ID`、`CF_Account_ID`，并会保存供续期使用；这些参数不写入 `node.toml` 或 `secrets.json`。[dns_cf 实现](https://github.com/acmesh-official/acme.sh/blob/3.1.6/dnsapi/dns_cf.sh)
@@ -200,7 +200,7 @@ getent group www-data >/dev/null || groupadd --system www-data
 id www-data >/dev/null 2>&1 || useradd --system --gid www-data --no-create-home --shell /usr/sbin/nologin www-data
 id xray >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin xray
 install -d -m 0750 -o xray -g www-data /var/log/xray
-install -d -m 0755 /var/log/nginx /var/www/html /var/www/acme
+install -d -m 0755 /var/log/nginx /var/www /var/www/html /var/www/acme
 install -d -m 0700 /etc/ssl/dmit/domain /etc/ssl/dmit/ip /etc/usque
 install -d -m 0700 /root/dmit-install-records
 systemctl enable --now cron
@@ -358,9 +358,9 @@ chmod 0600 /etc/dmit-node/node.toml /etc/dmit-node/secrets.json
 
 ```toml
 [node]
-domain = "dmit-qwq1.yushulinfeng.com"
-aliases = ["dmit-www.yushulinfeng.com"]
-reality_domain = "dmit-reality.yushulinfeng.com"
+domain = "dmit-qwq1.example.com"
+aliases = ["dmit-www.example.com"]
+reality_domain = "dmit-reality.example.com"
 ipv4 = "203.0.113.10" # 必须替换成自己的实际公网 IPv4
 ipv6 = ""           # 有可达 IPv6 时填写实际地址
 ```
@@ -479,7 +479,7 @@ http {
 NGINX
 nginx -t -c /etc/nginx/dmit-bootstrap.conf
 nginx -c /etc/nginx/dmit-bootstrap.conf
-install -d -m 0755 /var/www/acme/.well-known/acme-challenge
+install -d -m 0755 /var/www/acme/.well-known /var/www/acme/.well-known/acme-challenge
 printf 'dmit-acme-ready\n' > /var/www/acme/.well-known/acme-challenge/probe
 chmod 0644 /var/www/acme/.well-known/acme-challenge/probe
 curl --fail http://127.0.0.1/.well-known/acme-challenge/probe
@@ -636,23 +636,23 @@ ip -6 route show default
 以下命令在外部客户端执行，先将 `$DMIT_IPV4` 设置成自己的实际地址；IPv6 测试只在启用 IPv6 时进行：
 
 ```bash
-curl --fail --head https://dmit-qwq1.yushulinfeng.com/
-curl --fail --head https://dmit-www.yushulinfeng.com/
-curl --fail --head --resolve "dmit-qwq1.yushulinfeng.com:443:$DMIT_IPV4" \
-  https://dmit-qwq1.yushulinfeng.com/
+curl --fail --head https://dmit-qwq1.example.com/
+curl --fail --head https://dmit-www.example.com/
+curl --fail --head --resolve "dmit-qwq1.example.com:443:$DMIT_IPV4" \
+  https://dmit-qwq1.example.com/
 openssl s_client -connect "$DMIT_IPV4:443" \
-  -servername dmit-qwq1.yushulinfeng.com \
-  -verify_hostname dmit-qwq1.yushulinfeng.com -verify_return_error </dev/null
+  -servername dmit-qwq1.example.com \
+  -verify_hostname dmit-qwq1.example.com -verify_return_error </dev/null
 curl --fail --head "https://$DMIT_IPV4/"
 curl -V
 ```
 
-域名返回域名证书，IP 直接访问返回 IP SAN 证书；HTTPS 响应应有 `Alt-Svc: h3=":443"; ma=86400`。这只是 H3 广告，不能证明 UDP 可达。若 curl 的 features 支持 HTTP3，再执行 `curl --http3-only --head https://dmit-qwq1.yushulinfeng.com/`；否则用支持 H3 的客户端测试，不把普通 H2 请求当 H3 结果。不要添加 `-k` 来掩盖证书错误。
+域名返回域名证书，IP 直接访问返回 IP SAN 证书；HTTPS 响应应有 `Alt-Svc: h3=":443"; ma=86400`。这只是 H3 广告，不能证明 UDP 可达。若 curl 的 features 支持 HTTP3，再执行 `curl --http3-only --head https://dmit-qwq1.example.com/`；否则用支持 H3 的客户端测试，不把普通 H2 请求当 H3 结果。不要添加 `-k` 来掩盖证书错误。
 
 验证 HTTP-01 的长期入口仍然可达：
 
 ```bash
-curl --fail http://dmit-qwq1.yushulinfeng.com/.well-known/acme-challenge/probe
+curl --fail http://dmit-qwq1.example.com/.well-known/acme-challenge/probe
 ```
 
 同时用裸 IP 请求该路径，确保后续 IP 证书续期不依赖 DNS 域名或 HTTPS 重定向。
@@ -669,9 +669,9 @@ chmod 0600 /root/exports/profiles.json
 
 | Profile | 地址/端口 | SNI | 传输 | ALPN |
 | --- | --- | --- | --- | --- |
-| XHTTP TLS | `dmit-qwq1.yushulinfeng.com:443` | `dmit-qwq1.yushulinfeng.com` | XHTTP stream-one，生成路径 | H2 |
+| XHTTP TLS | `dmit-qwq1.example.com:443` | `dmit-qwq1.example.com` | XHTTP stream-one，生成路径 | H2 |
 | WS TLS | 同上 | 同上 | WS，生成的精确路径 | HTTP/1.1 |
-| REALITY | `dmit-qwq1.yushulinfeng.com:8443` | `dmit-reality.yushulinfeng.com` | XHTTP stream-one，第三条路径 | 由参考客户端配置处理 |
+| REALITY | `dmit-qwq1.example.com:8443` | `dmit-reality.example.com` | XHTTP stream-one，第三条路径 | 由参考客户端配置处理 |
 
 REALITY address 使用主域是当前生成器的行为；它与 reality 域都应解析到同一 DMIT，SNI 仍是独立的 `dmit-reality`。公钥/Short ID/UUID 从导出读取，不复制服务端私钥。80/15/5 是客户端分配权重，服务端不随机分流；四种 XHTTP 指纹内部比例为 5/2/3/1。
 
@@ -814,7 +814,7 @@ fi
 交付前逐项检查：
 
 - [ ] 三个 dmit- 子域的真实解析正确，未变更根域/邮件/其他业务。
-- [ ] Token 仅限 yushulinfeng.com、凭据和导出未入 Git，文件权限正确。
+- [ ] Token 仅限 example.com、凭据和导出未入 Git，文件权限正确。
 - [ ] 域名证书精确覆盖三名且为 P-384；IP 证书覆盖全部启用地址，信任链和有效期合格。
 - [ ] bootstrap 已退出，最终 HTTP-01 webroot 可从公网裸 IP 访问。
 - [ ] check 通过；apply 后三类客户端真实握手通过，current 指向本次成功版本。

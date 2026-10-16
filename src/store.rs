@@ -97,7 +97,8 @@ impl Store {
     pub fn lock(&self) -> Result<File> {
         let file = self.recovery_lock()?;
         ensure!(
-            !self.state_dir.join("transaction.json").exists(),
+            !self.state_dir.join("transaction.json").exists()
+                && !self.state_dir.join("uninstall.json").exists(),
             "An interrupted deployment exists: run nodectl recover (see README recovery)"
         );
         Ok(file)
@@ -190,7 +191,8 @@ impl Store {
         ensure!(
             manifest.schema_version == 1
                 && manifest.template_version == render::TEMPLATE_VERSION
-                && manifest.generator_version == env!("CARGO_PKG_VERSION"),
+                // v0.1.0 uses the same schema/templates and is re-rendered below.
+                && [env!("CARGO_PKG_VERSION"), "0.1.0"].contains(&manifest.generator_version.as_str()),
             "Release requires its original nodectl/template version"
         );
         check_private(&path.join("source"), true)?;

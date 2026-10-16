@@ -1,0 +1,10 @@
+name: Feature request
+description: Propose a scoped improvement
+body:
+  - type: textarea
+    id: need
+    attributes: {label: User problem, expected behavior and acceptance criteria}
+    validations: {required: true}
+  - type: textarea
+    id: design
+    attributes: {label: Existing open-source solutions, compatibility, risks and recovery approach}

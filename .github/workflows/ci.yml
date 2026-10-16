@@ -1,33 +1,62 @@
-name: Rust checks
-on: [push, pull_request]
+name: Quality and lifecycle gates
+on:
+  push:
+    branches: [main, 'codex/**']
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      run_integration:
+        type: boolean
+        default: true
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
 jobs:
   checks:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - run: cargo fmt --check
-      - run: cargo test --locked
-      - run: cargo clippy --locked --all-targets -- -D warnings
-      - run: cargo run --locked -- schema > /tmp/node.schema.json && diff -u schemas/node.schema.json /tmp/node.schema.json
-      - uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          command: check advisories licenses sources
-      - name: Verify official Xray compatibility
-        shell: bash
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: {fetch-depth: 0}
+      - run: rustup show active-toolchain
+      - run: bash scripts/check-all.sh
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+        with: {command: check advisories licenses sources}
+      - name: Official Xray compatibility
         run: |
-          python3 - <<'PY'
-          import hashlib, pathlib, tomllib, urllib.request, zipfile
-          lock = tomllib.loads(pathlib.Path('versions.lock.toml').read_text())['xray']
-          archive = pathlib.Path('/tmp/nodectl-xray.zip')
-          urllib.request.urlretrieve(lock['linux_amd64_url'], archive)
-          assert hashlib.sha256(archive.read_bytes()).hexdigest() == lock['linux_amd64_archive_sha256']
-          with zipfile.ZipFile(archive) as package:
-              pathlib.Path('/tmp/nodectl-xray').write_bytes(package.read('xray'))
-          pathlib.Path('/tmp/nodectl-xray').chmod(0o700)
-          PY
+          python3 scripts/download-xray.py /tmp/nodectl-xray
           XRAY_TEST_BINARY=/tmp/nodectl-xray cargo test --locked upstream_xray_accepts -- --ignored
+  secrets:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {fetch-depth: 0}
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  integration:
+    if: github.event_name != 'workflow_call' || inputs.run_integration
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: ubuntu-24.04, image: 'debian:12'}
+          - {runner: ubuntu-24.04, image: 'debian:13'}
+          - {runner: ubuntu-24.04, image: 'ubuntu:24.04'}
+          - {runner: ubuntu-24.04, image: 'ubuntu:26.04'}
+          - {runner: ubuntu-24.04-arm, image: 'debian:12'}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Clean systemd environment, real services, network and lifecycle
+        run: sudo bash scripts/test-integration.sh '${{ matrix.image }}'
+      - name: Keep sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: integration-${{ strategy.job-index }}
+          path: dist/integration-*.log
+          if-no-files-found: error

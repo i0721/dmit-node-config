@@ -18,9 +18,9 @@
 
 | 名称 | A 核对 | AAAA 核对或明确未启用 | 灰云 | 外部查询时间 |
 | --- | --- | --- | --- | --- |
-| dmit-qwq1.yushulinfeng.com | 待验收 | 待验收 | 待验收 | 待填写 |
-| dmit-www.yushulinfeng.com | 待验收 | 待验收 | 待验收 | 待填写 |
-| dmit-reality.yushulinfeng.com | 待验收 | 待验收 | 待验收 | 待填写 |
+| dmit-qwq1.example.com | 待验收 | 待验收 | 待验收 | 待填写 |
+| dmit-www.example.com | 待验收 | 待验收 | 待验收 | 待填写 |
+| dmit-reality.example.com | 待验收 | 待验收 | 待验收 | 待填写 |
 
 | Token 记录项 | 实际记录 |
 | --- | --- |
@@ -35,7 +35,7 @@
 | --- | --- | --- |
 | SAN 完整列表 | 待填写 | 待填写 |
 | 算法 / issuer / serial / notAfter | 待填写 | 待填写 |
-| 首个 -d 的标识 | dmit-qwq1.yushulinfeng.com | 实际 IPv4，私密记录 |
+| 首个 -d 的标识 | dmit-qwq1.example.com | 实际 IPv4，私密记录 |
 | 验证方式 | DNS-01 / dns_cf | HTTP-01 / webroot |
 | 运行目录 | /etc/ssl/dmit/domain | /etc/ssl/dmit/ip |
 | 信任链、私钥匹配、权限验收 | 待验收 | 待验收 |

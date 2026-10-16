@@ -48,9 +48,19 @@ pub fn xray(c: &Config, s: &Secrets) -> Value {
         reality["streamSettings"]["sockopt"] = json!({"v6only":true});
         inbounds.push(reality);
     }
+    let direct = json!({"tag":"direct","protocol":"freedom"});
+    // The isolated HTTPS fixture is local. Xray blocks private destinations by
+    // default; allow only this test endpoint without weakening release output.
+    #[cfg(feature = "integration-test")]
+    let direct = {
+        let mut direct = direct;
+        direct["settings"] =
+            json!({"finalRules":[{"action":"allow","ip":["127.0.0.1/32"],"port":"9443"}]});
+        direct
+    };
     json!({"log":{"loglevel":"warning","access":format!("{}/xray/access.log",c.runtime.log_root),
         "error":format!("{}/xray/error.log",c.runtime.log_root)},"inbounds":inbounds,
-        "outbounds":[{"tag":"direct","protocol":"freedom"},{"tag":"block","protocol":"blackhole"}]})
+        "outbounds":[direct,{"tag":"block","protocol":"blackhole"}]})
 }
 
 pub fn outbound(c: &Config, s: &Secrets, kind: &str, fingerprint: &str) -> Result<Value> {

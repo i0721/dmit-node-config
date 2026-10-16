@@ -23,6 +23,17 @@ pub fn command(binary: &str, args: &[&str]) -> Result<String> {
     String::from_utf8(run(binary, args, None)?).context("Tool returned invalid UTF-8")
 }
 fn run(binary: &str, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>> {
+    run_capture(binary, args, input, false)
+}
+pub(crate) fn command_stderr(binary: &str, args: &[&str]) -> Result<String> {
+    String::from_utf8(run_capture(binary, args, None, true)?).context("Tool returned invalid UTF-8")
+}
+fn run_capture(
+    binary: &str,
+    args: &[&str],
+    input: Option<&[u8]>,
+    capture_stderr: bool,
+) -> Result<Vec<u8>> {
     let out = tempfile::tempfile()?;
     let err = tempfile::tempfile()?;
     let mut stdin = tempfile::tempfile()?;
@@ -38,7 +49,11 @@ fn run(binary: &str, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>> {
         .env("LC_ALL", "C")
         .stdin(stdin)
         .stdout(out.try_clone()?)
-        .stderr(err)
+        .stderr(if capture_stderr {
+            out.try_clone()?
+        } else {
+            err
+        })
         .spawn()
         .with_context(|| format!("Cannot start tool {binary}"))?;
     let start = Instant::now();
@@ -167,7 +182,7 @@ fn dependencies(c: &Config, reference: &Reference) -> Result<BTreeMap<String, St
         .collect()
 }
 
-fn certificates(c: &Config) -> Result<()> {
+pub(crate) fn certificates(c: &Config) -> Result<()> {
     for (dir, sans, is_ip) in [
         (&c.tls.domain_cert_dir, c.domains(), false),
         (&c.tls.ip_cert_dir, c.ips(), true),
@@ -316,12 +331,9 @@ fn preflight(store: &Store, id: &str, reference: &Reference) -> Result<(Config, 
         access(&c.runtime.nginx_user, None, "-x", path(parent)?)?;
     }
     let release = store.release(id)?;
-    command(
-        &c.runtime.xray_binary,
-        &["run", "-test", "-config", path(&release.join("xray.json"))?],
-    )?;
     // systemd credentials give the unprivileged process access without opening
-    // the root-only snapshot. Reproduce that access for the candidate test.
+    // the root-only snapshot. Test only as the service user: even -test opens
+    // log files, so a root test would create files the service cannot write.
     let tmp = tempfile::Builder::new()
         .prefix("nodectl-check-")
         .tempdir_in("/run")?;
@@ -421,6 +433,17 @@ const ENTRIES: [(&str, &str); 5] = [
 ];
 const SERVICES: [&str; 3] = ["xray", "nginx", "usque-warp"];
 
+fn checkpoint(_name: &str) -> Result<()> {
+    #[cfg(feature = "integration-test")]
+    ensure!(
+        !std::env::var("NODECTL_FAILPOINT")
+            .ok()
+            .is_some_and(|value| value.split(',').any(|stage| stage == _name)),
+        "Injected integration failure: {_name}"
+    );
+    Ok(())
+}
+
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", deny_unknown_fields)]
 enum Entry {
@@ -441,7 +464,7 @@ struct Service {
     active: bool,
     enabled: String,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Transaction {
     candidate: String,
     current: Option<String>,
@@ -581,7 +604,15 @@ fn service_state(name: &str) -> Result<Service> {
         .to_owned()
     };
     ensure!(
-        ["enabled", "enabled-runtime", "disabled", "static", ""].contains(&enabled.as_str()),
+        [
+            "enabled",
+            "enabled-runtime",
+            "disabled",
+            "linked",
+            "static",
+            ""
+        ]
+        .contains(&enabled.as_str()),
         "Unsupported existing service enable state for {name}; preserve it explicitly before takeover"
     );
     let active = command("systemctl", &["show", name, "-p", "ActiveState", "--value"])?;
@@ -665,7 +696,15 @@ pub fn apply(store: &Store, id: &str) -> Result<()> {
         backup,
     };
     let journal = store.state_dir.join("transaction.json");
+    // Keep the original host state across later applies and upgrades.
+    if tx.current.is_none() {
+        store::atomic_write(
+            &store.state_dir.join("installation.json"),
+            &serde_json::to_vec_pretty(&tx)?,
+        )?;
+    }
     store::atomic_write(&journal, &serde_json::to_vec_pretty(&tx)?)?;
+    checkpoint("journal")?;
     transact(
         || activate(store, id, &c, &s, &r, &tx),
         || restore(store, &tx),
@@ -724,22 +763,25 @@ fn activate(
     let old = tx.current.as_deref();
     let old_c = old.map(|v| store.verify(v).map(|p| p.0)).transpose()?;
     let mut unit_changed = false;
-    for (dest, source) in ENTRIES {
+    for (index, (dest, source)) in ENTRIES.into_iter().enumerate() {
         fs::create_dir_all(Path::new(dest).parent().unwrap())?;
         if source.starts_with("systemd/") && changed(store, id, old, source)? {
             unit_changed = true;
         }
         store::replace_link(&store.release(id)?.join(source), Path::new(dest))?;
+        checkpoint(&format!("entry-{index}"))?;
     }
     if unit_changed {
         command("systemctl", &["daemon-reload"])?;
     }
+    checkpoint("daemon-reload")?;
     let xray_changed =
         changed(store, id, old, "xray.json")? || changed(store, id, old, "systemd/xray.service")?;
     if xray_changed || !tx.services["xray"].active {
         command("systemctl", &["restart", "xray"])?;
     }
     command("systemctl", &["enable", "xray"])?;
+    checkpoint("xray")?;
     let nginx_unit = changed(store, id, old, "systemd/nginx.service")?;
     let listeners_changed = old_c.as_ref().is_none_or(|old| {
         old.ports.http != c.ports.http
@@ -753,6 +795,7 @@ fn activate(
         command("systemctl", &["reload", "nginx"])?;
     }
     command("systemctl", &["enable", "nginx"])?;
+    checkpoint("nginx")?;
     let warp_changed = changed(store, id, old, "systemd/usque-warp.service")?
         || old_c
             .as_ref()
@@ -773,11 +816,21 @@ fn activate(
         if c.warp.enabled {
             command("systemctl", &["enable", "usque-warp"])?;
             command("systemctl", &["restart", "usque-warp"])?;
-        } else {
-            command("systemctl", &["disable", "--now", "usque-warp"])?;
+        } else if warp_state.active || warp_state.enabled.starts_with("enabled") {
+            command("systemctl", &["stop", "usque-warp"])?;
+            command("systemctl", &["disable", "usque-warp"])?;
+            // disable also removes linked units stored outside /etc and /usr.
+            // Retain our managed entrypoint while leaving the service disabled.
+            store::replace_link(
+                &store.release(id)?.join("systemd/usque-warp.service"),
+                Path::new("/etc/systemd/system/usque-warp.service"),
+            )?;
+            command("systemctl", &["daemon-reload"])?;
         }
     }
+    checkpoint("services")?;
     health(c, s, &r.reference)?;
+    checkpoint("health")?;
     ensure!(
         tx.routes == default_routes(false)? && tx.routes6 == default_routes(true)?,
         "Default routes changed during deployment"
@@ -844,8 +897,12 @@ fn restore(store: &Store, tx: &Transaction) -> Result<()> {
             Err(e) => attempt(&format!("inspect {name}"), Err(e)),
         }
     }
-    for (dest, e) in &tx.entries {
-        attempt(dest, restore_entry(Path::new(dest), e));
+    for (index, (dest, e)) in tx.entries.iter().enumerate() {
+        attempt(
+            dest,
+            checkpoint(&format!("restore-entry-{index}"))
+                .and_then(|_| restore_entry(Path::new(dest), e)),
+        );
     }
     attempt(
         "daemon-reload",
@@ -920,7 +977,12 @@ fn restore(store: &Store, tx: &Transaction) -> Result<()> {
         errors.join(", ")
     );
     let success = store.state_dir.join("success").join(&tx.candidate);
-    if success.exists() {
+    // Uninstall retains successful snapshot history. Its pending journal may
+    // still need that marker to recover the installed state after a crash.
+    if !store.state_dir.join("uninstall.json").exists()
+        && tx.current.as_deref() != Some(tx.candidate.as_str())
+        && success.exists()
+    {
         fs::remove_file(success)?;
     }
     fs::remove_file(store.state_dir.join("transaction.json"))?;
@@ -1016,6 +1078,13 @@ fn handshake(c: &Config, s: &Secrets, reference: &Reference, kind: &str) -> Resu
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let port = listener.local_addr()?.port();
     let mut outbound = render::outbound(c, s, kind, "chrome")?;
+    // Isolated integration fixtures use an ephemeral CA installed in the OS.
+    // Xray otherwise defaults to its embedded public roots. Keep verification
+    // enabled; release binaries never include this test-only trust selection.
+    #[cfg(feature = "integration-test")]
+    if kind != "reality" {
+        outbound["streamSettings"]["tlsSettings"]["useSystemCA"] = json!(true);
+    }
     // Local loopback is the server under test; retain the real SNI and Host.
     outbound["settings"]["vnext"][0]["address"] = json!("127.0.0.1");
     let profile = json!({"log":{"loglevel":"none"},"inbounds":[{"listen":"127.0.0.1","port":port,
@@ -1097,8 +1166,148 @@ pub fn renew(store: &Store) -> Result<()> {
     Ok(())
 }
 
+#[derive(Serialize, Deserialize)]
+struct UninstallJournal {
+    rollback: Transaction,
+}
+
+fn validate_transaction(store: &Store, tx: &Transaction) -> Result<()> {
+    store.release(&tx.candidate)?;
+    ensure!(
+        tx.backup.starts_with(store.state_dir.join("backups")),
+        "Backup escapes state directory"
+    );
+    store::check_private(&tx.backup, true)?;
+    ensure!(
+        tx.entries.len() == ENTRIES.len()
+            && ENTRIES
+                .iter()
+                .all(|(dest, _)| tx.entries.contains_key(*dest)),
+        "Unexpected transaction entrypoints"
+    );
+    ensure!(
+        tx.services.len() == SERVICES.len()
+            && SERVICES.iter().all(|s| tx.services.contains_key(*s)),
+        "Unexpected transaction services"
+    );
+    for entry in tx.entries.values() {
+        if let Entry::File { backup, sha256, .. } = entry {
+            ensure!(
+                backup.parent() == Some(tx.backup.as_path()),
+                "Backup file outside transaction directory"
+            );
+            store::check_private(backup, false)?;
+            ensure!(
+                store::file_digest(backup)? == *sha256,
+                "Backup integrity failure"
+            );
+        }
+    }
+    Ok(())
+}
+
+pub fn uninstall(store: &Store, execute: bool) -> Result<()> {
+    let current = store
+        .pointer("current")?
+        .context("No installed successful release")?;
+    let baseline_path = store.state_dir.join("installation.json");
+    store::check_private(&baseline_path,false).context("No original installation baseline. Legacy installs must recover their original entrypoints and service states explicitly; refusing destructive guesses")?;
+    let mut baseline: Transaction = serde_json::from_slice(&fs::read(baseline_path)?)?;
+    validate_transaction(store, &baseline)?;
+    ensure!(
+        baseline.current.is_none() && baseline.previous.is_none(),
+        "Invalid installation baseline"
+    );
+    for (dest, source) in ENTRIES {
+        ensure!(
+            fs::read_link(dest).ok() == Some(store.release(&current)?.join(source)),
+            "Managed entrypoint drifted: {dest}; resolve before uninstall"
+        );
+        println!("Restore {dest} to {}", fingerprint(&baseline.entries[dest]));
+    }
+    for (name, state) in &baseline.services {
+        println!(
+            "Restore service {name}: active={}, enabled={}",
+            state.active, state.enabled
+        );
+    }
+    println!(
+        "Retain certificates, WARP credentials, configuration, snapshots, backup records and nodectl executable."
+    );
+    if !execute {
+        println!("Preview only; rerun uninstall --execute.");
+        return Ok(());
+    }
+    linux_root()?;
+    let backup = store
+        .state_dir
+        .join("backups")
+        .join(uuid::Uuid::new_v4().to_string());
+    store::private_dir(&backup)?;
+    let mut entries = BTreeMap::new();
+    for (i, (dest, _)) in ENTRIES.iter().enumerate() {
+        entries.insert(
+            dest.to_string(),
+            entry(Path::new(dest), &backup.join(format!("entry-{i}")))?,
+        );
+    }
+    let rollback = Transaction {
+        candidate: current.clone(),
+        current: Some(current),
+        previous: store.pointer("previous")?,
+        entries,
+        services: SERVICES
+            .into_iter()
+            .map(|name| Ok((name.to_owned(), service_state(name)?)))
+            .collect::<Result<_>>()?,
+        routes: default_routes(false)?,
+        routes6: default_routes(true)?,
+        backup,
+    };
+    // Network changes made since installation are not owned by uninstall.
+    baseline.routes = rollback.routes.clone();
+    baseline.routes6 = rollback.routes6.clone();
+    let pending = store.state_dir.join("uninstall.json");
+    store::atomic_write(
+        &pending,
+        &serde_json::to_vec_pretty(&UninstallJournal {
+            rollback: rollback.clone(),
+        })?,
+    )?;
+    checkpoint("uninstall-journal")?;
+    let journal = store.state_dir.join("transaction.json");
+    store::atomic_write(&journal, &serde_json::to_vec_pretty(&baseline)?)?;
+    if restore(store, &baseline).is_err() {
+        store::atomic_write(&journal, &serde_json::to_vec_pretty(&rollback)?)?;
+        if restore(store, &rollback).is_err() {
+            bail!(
+                "Uninstall and recovery failed; journals retained. Run recover before further mutations."
+            );
+        }
+        fs::remove_file(pending)?;
+        bail!("Uninstall failed; installed entrypoints and services restored");
+    }
+    checkpoint("uninstall-restored")?;
+    fs::remove_file(pending)?;
+    println!("Original entrypoints and service states restored and verified.");
+    Ok(())
+}
+
 pub fn recover(store: &Store) -> Result<()> {
     linux_root()?;
+    let uninstall = store.state_dir.join("uninstall.json");
+    if uninstall.exists() {
+        store::check_private(&uninstall, false)?;
+        let pending: UninstallJournal = serde_json::from_slice(&fs::read(&uninstall)?)?;
+        validate_transaction(store, &pending.rollback)?;
+        store::atomic_write(
+            &store.state_dir.join("transaction.json"),
+            &serde_json::to_vec_pretty(&pending.rollback)?,
+        )?;
+        restore(store, &pending.rollback)?;
+        fs::remove_file(uninstall)?;
+        return Ok(());
+    }
     let journal = store.state_dir.join("transaction.json");
     store::check_private(&journal, false)?;
     let tx: Transaction = serde_json::from_slice(&fs::read(journal)?)?;
