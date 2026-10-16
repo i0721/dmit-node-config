@@ -26,7 +26,7 @@ jobs:
         run: |
           docker build --build-arg BASE=debian:12 -f tests/integration/Dockerfile -t nodectl-release-build .
           mkdir -p dist
-          docker run --rm -e SOURCE_COMMIT="$(git rev-parse HEAD)" -e SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" -v "$PWD/dist:/work/dist" nodectl-release-build bash scripts/release-package.sh '${{ matrix.target }}'
+          docker run --rm --entrypoint /bin/bash -e SOURCE_COMMIT="$(git rev-parse HEAD)" -e SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" -v "$PWD/dist:/work/dist" nodectl-release-build scripts/release-package.sh '${{ matrix.target }}'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: release-${{ matrix.target }}
