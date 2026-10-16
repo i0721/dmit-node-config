@@ -1,5 +1,3 @@
-可以。按你这次最终要求，我会把方案收敛成：
-
 > **裸机 Linux + systemd + Nginx + 原始 Xray Core + acme.sh + usque，完全抛弃 Docker / 3x-ui。**
 >
 > 443：XHTTP（你说的 SplitHTTP）80% + WS 15%  
@@ -27,7 +25,7 @@
               │                          │
        ┌──────┴──────┐             REALITY
        │             │                 │
-    /xhttp/         /ws/               │
+   资源子路径      事件子路径             │
        │             │                 │
        │             │          target 127.0.0.1:443
        │             │                 │
@@ -439,6 +437,17 @@ openssl rand -hex 8
 
 # 14. Xray 最终配置
 
+### 入口路径约定
+
+两个入口放在多级业务路径下，不使用直接暴露协议名称的根级路径：
+
+| 用途 | 本文示例路径 |
+| --- | --- |
+| XHTTP（443） | `/assets/modules/6b91d4e8a37fc205/stream/` |
+| WS（443） | `/api/events/c84f20a7d693be51/channel` |
+
+部署时分别运行一次 `openssl rand -hex 8`，用生成的值替换上表中的两个随机段，并同步替换下文 **Xray、Nginx 和客户端 Profile** 的对应路径。XHTTP 路径末尾的 `/` 也要保持一致。这些是 URL 路由，不需要在网站目录下创建对应的文件或文件夹；普通网站内容仍由原来的 `location /` 处理。路径命名只用于减少明显的协议标识，不替代认证。
+
 `/etc/xray/config.json`
 
 ```json
@@ -471,7 +480,7 @@ openssl rand -hex 8
         "network": "xhttp",
 
         "xhttpSettings": {
-          "path": "/xhttp",
+          "path": "/assets/modules/6b91d4e8a37fc205/stream/",
           "mode": "stream-one"
         }
       }
@@ -498,7 +507,7 @@ openssl rand -hex 8
         "network": "ws",
 
         "wsSettings": {
-          "path": "/ws"
+          "path": "/api/events/c84f20a7d693be51/channel"
         }
       }
     },
@@ -923,7 +932,8 @@ http {
         # XHTTP
         # ==================================================
 
-        location /xhttp {
+        # 保留 XHTTP 子路径，原样转发完整 URI。
+        location ^~ /assets/modules/6b91d4e8a37fc205/stream/ {
 
             client_max_body_size 0;
 
@@ -950,7 +960,7 @@ http {
         # WebSocket
         # ==================================================
 
-        location /ws {
+        location = /api/events/c84f20a7d693be51/channel {
 
             proxy_http_version 1.1;
 
@@ -1295,7 +1305,7 @@ Network:
 XHTTP
 
 Path:
-/xhttp
+/assets/modules/6b91d4e8a37fc205/stream/
 
 Security:
 TLS
@@ -1387,7 +1397,7 @@ Network:
 WS
 
 Path:
-/ws
+/api/events/c84f20a7d693be51/channel
 
 Security:
 TLS
@@ -1875,7 +1885,3 @@ UDS         UDS     │
 [ ] 暂不修改 default route
 [ ] curl --interface tunX 验证 WARP
 ```
-
-最后一点尤其重要：**不要把“Chrome/iOS/Firefox/QQ 5:2:3:1”当成“伪装算法”或者“保证不会被标记”的开关。** Xray 官方明确说明 fingerprint 主要作用在 TLS ClientHello，不能保证完整流量行为等同于真实浏览器。你这套配置应该以**真实、合法的协议栈行为、自己的证书、自己的域名和稳定的网络架构**为目标，而不是追求某个“绝对不被识别”的配置。[Project X](https://xtls.github.io/config/transports/tls.html?utm_source=chatgpt.com)
-
-另外，**你这个方案里最值得实际验证的不是 443 XHTTP/WS，而是 `8443 → REALITY → 127.0.0.1:443 → Nginx` 这一条链**，因为当前确实存在 XHTTP+REALITY 本地 target 的已记录兼容性问题。[GitHub](https://github.com/XTLS/Xray-core/issues/5923)
