@@ -75,7 +75,7 @@ jobs:
           mkdir -p "$fixtures/wrong-arch" "$fixtures/failing-binary" "$fixtures/payload"
           archive="nodectl-$TAG-x86_64-unknown-linux-gnu.tar.gz"
           cp "dist/nodectl-$TAG-aarch64-unknown-linux-gnu.tar.gz" "$fixtures/wrong-arch/$archive"
-          cp /bin/false "$fixtures/payload/nodectl"
+          cp /bin/dash "$fixtures/payload/nodectl"
           tar -C "$fixtures/payload" -czf "$fixtures/failing-binary/$archive" nodectl
           for kind in wrong-arch failing-binary; do
             (cd "$fixtures/$kind"; sha256sum "$archive" > SHA256SUMS; cosign sign-blob --yes --bundle SHA256SUMS.sigstore.json SHA256SUMS)
@@ -87,7 +87,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/nodectl-legacy"
           git archive 0a95befa777895dfdc544a6577bf56a3ff82014a | tar -x -C "$RUNNER_TEMP/nodectl-legacy"
           cargo build --locked --manifest-path "$RUNNER_TEMP/nodectl-legacy/Cargo.toml" --target-dir "$RUNNER_TEMP/nodectl-legacy-target"
-          sudo env PATH="$PATH" bash scripts/test-installer.sh dist "$TAG" /opt/nodectl-release-test "$RUNNER_TEMP/nodectl-negative" "$RUNNER_TEMP/nodectl-legacy-target/debug/nodectl"
+          sudo env PATH="$PATH" bash scripts/test-installer.sh dist "$TAG" /root/nodectl-release-test "$RUNNER_TEMP/nodectl-negative" "$RUNNER_TEMP/nodectl-legacy-target/debug/nodectl"
       - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with: {subject-path: 'dist/*'}
       - name: Publish only verified assets and verify uploaded provenance
