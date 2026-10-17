@@ -1,32 +1,38 @@
-# 安装与交付
+# 安装与正式发行
 
-运行基线：x86_64 的 Debian 12/13、Ubuntu 24.04/26.04，ARM64 的 Debian 12；固定 Rust 1.99.1。其他 ARM64 系统按 [结果报告](defect/03-results.md) 的实际证据判断，Ubuntu 26.04 ARM64 尚未完成验收。两个架构均须原生构建及归档自检，不能用仅编译结果宣称全部系统兼容。
+完整部署使用 [README 的一键入口](../README.md#linux-一键安装与部署)。本页说明版本选择、工具安装及发行验证，供高级运维和自动化使用。
 
-## 无 Rust 的安装
+## 版本与信任
 
-从 [Releases](https://github.com/i0721/dmit-node-config/releases) 获取版本对应的 install.sh，先审阅。准备 curl、tar、sha256sum 及 [官方 cosign](https://docs.sigstore.dev/cosign/system_config/installation/)。验证器本身必须来自可信供应链，不能下载未知同名程序。
+无操作参数时，脚本解析一次最新稳定版并冻结本次版本，自动准备固定摘要的官方 cosign 3.1.3。验证 SHA256SUMS 的 Sigstore bundle，绑定 GitHub OIDC issuer 和本仓库 release.yml 的精确标签身份，再检查归档摘要、ELF 架构、程序版本及旧配置兼容性。
 
-```sh
-sh install.sh --version v0.2.0 --dry-run
-sudo sh install.sh --version v0.2.0 --execute
-nodectl --help
-nodectl doctor
-```
+资产缺失、版本过旧或验证失败即停止，不回退到未签名资产、源码编译或手动上传。不提供跳过验签参数。新程序原子安装，原程序按摘要保存在 `/usr/local/lib/nodectl/versions/`；未恢复事务会阻止替换。
 
-版本必填，不隐式跟踪 latest。先验证 SHA256SUMS 的 Sigstore 签名，固定 GitHub OIDC issuer 与本仓库 release.yml 的标签身份，再校验归档，且只抽取 nodectl。新二进制版本、help、schema 和已有配置 validate 通过后才原子替换。旧程序保存在 `/usr/local/lib/nodectl/versions/<sha256>`。不提供跳过签名参数。
+在已下载的同一脚本后添加 `--version v0.3.1` 可固定版本；`--token-file /root/cf-token` 把受保护凭据文件交给 Rust 向导，不把 Token 真值放入 argv。
 
-离线资产放在绝对目录，用 `--bundle-dir /absolute/directory`；仍验证签名和摘要。dry-run 不下载、不创建目录。执行安装需要对目标目录及其父路径的安全控制，默认通过 root 安装。
+## 只安装或升级 nodectl
 
-## 源码与运行依赖
+此模式不调用部署、不操作服务，适合已有自动化链路：
 
 ```sh
-cargo test --locked
-cargo build --release --locked
-sudo install -m 0755 target/release/nodectl /usr/local/bin/nodectl
+sh dmitserverconfig-setup.sh --install-only --version v0.3.1 --dry-run
+sudo sh dmitserverconfig-setup.sh --install-only --version v0.3.1 --execute
 ```
 
-源码信任来自已审阅提交和 Cargo.lock，不能冒充正式 OIDC 资产。系统组件安装见 [部署参考第 4 节](deployment.md#4-服务器软件与防火墙)。Nginx >=1.25.1，SSL/H2/H3；其他版本见 versions.lock.toml。Xray v26.10.10 为预发布版本，固定摘要不是稳定性保证。运维人员管理依赖升级，升级后重做 check 与完整握手，失败恢复原程序。
+原有明确指定 `--execute/--dry-run` 的命令保留工具安装语义。`nodectl upgrade` 也调用工具安装模式，避免递归进入向导。固定版本的 dry-run 不下载或创建文件；未固定版本时只会查询最新版本元数据。
 
-## 发布资产
+完整向导需要终端。无终端时不会隐式执行，使用工具安装模式及现有 `nodectl deploy --non-interactive` 的预览和 `--approve` 接口。
 
-两个架构分别提供 tar.gz，包含 nodectl、LICENSE、THIRD_PARTY.md、依赖许可证、CycloneDX SBOM 和构建信息。SHA256SUMS 覆盖下载资产，Sigstore 签名绑定精确版本工作流；GitHub 构建证明关联源码提交和工作流。另可执行 `gh attestation verify <archive> --repo i0721/dmit-node-config`。工作流文件存在不等于 Release 已发布；发布后必须核验真实资产及证明。
+## 网络与离线资产
+
+默认直接使用 GitHub HTTPS，支持标准 `http_proxy/https_proxy/ALL_PROXY/NO_PROXY` 及自定义 CA 环境变量；不会自动选用第三方镜像，也不输出含认证信息的代理值。
+
+`--bundle-dir /root/offline --version v0.3.1` 从本地目录读取对应架构归档、SHA256SUMS 和 Sigstore bundle；仍然验签。需在 PATH 或该目录提供固定摘要的官方 `cosign-linux-amd64` / `cosign-linux-arm64`。该选项仅让程序资产离线；系统软件、DNS、CA 和 WARP 的网络需求仍需另行满足，不能宣称整套部署离线。
+
+## 发布与源码
+
+两个架构均以 Debian 12 glibc 基线原生构建。归档包括程序、许可、依赖许可、CycloneDX SBOM 和构建信息；Release 包含清单、Sigstore bundle、安装器及发行说明。可额外使用 `gh attestation verify <archive> --repo i0721/dmit-node-config` 检查构建证明。
+
+正式版本来自 [GitHub Releases](https://github.com/i0721/dmit-node-config/releases)。源码开发构建见 [贡献指南](../CONTRIBUTING.md)，本地候选不能冒充正式发行资产。系统矩阵与交付证据见 [验收记录](defect/08-one-command-delivery.md)。
+
+全量质量及系统集成工作流只在手动触发时运行；标签触发的 Release 工作流仅原生构建、检查实际归档、生成 SBOM、签名及验证上传来源证明。不会为打包安装节点运行依赖；生产服务仍在目标主机原生运行。

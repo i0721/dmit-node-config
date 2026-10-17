@@ -1,5 +1,7 @@
 # 运维生命周期
 
+完整安装和保留配置更新使用 [统一安装入口](../README.md#linux-一键安装与部署)。以下为显式分层诊断和维护命令。
+
 ## 状态、诊断与变更
 
 ```sh
@@ -16,11 +18,11 @@ status 汇总当前/上一版本、服务、收据、24 小时证书门槛和中
 ## 工具升级及回退
 
 ```sh
-nodectl upgrade --version v0.2.0
-sudo nodectl upgrade --version v0.2.0 --execute
+nodectl upgrade --version v0.3.1
+sudo nodectl upgrade --version v0.3.1 --execute
 ```
 
-升级沿用精确版本签名安装器，先验证已有输入兼容性，失败不替换旧程序。不升级代理依赖、不重启服务。旧二进制按摘要保存在 `/usr/local/lib/nodectl/versions/`，回退先核对摘要，用同目录临时文件与原子替换恢复，再用原版本管理对应快照。
+升级沿用精确版本签名安装器，先验证已有输入兼容性，失败不替换旧程序。不升级代理依赖、不重启服务。此命令只更新程序；完整向导还会审阅并执行部署计划。旧二进制按摘要保存在 `/usr/local/lib/nodectl/versions/`，回退先核对摘要，用同目录临时文件与原子替换恢复，再用原版本管理对应快照。
 
 ## 卸载与撤销接管
 
@@ -50,3 +52,10 @@ nodectl renew-hook
 ## 备份、回滚和恢复
 
 私密备份涵盖输入、状态/backups、原工具、双证书、acme.sh、WARP 与摘要。传出主机前加密，隔离环境演练恢复。失败先 recover，再判断 rollback；保留事务和原始证据。完整步骤见 [参考第 11–13 节](deployment.md#11-无人值守续期与监控)。
+
+
+## 客户端导出与材料恢复
+
+一键向导成功后自动输出私密客户端目录，也可运行 `nodectl export-clients --format all --output /root/client-bundle`。profiles.json 是 Xray profiles，proxies.yaml 是 Mihomo 节点片段，weights.json 保留分配权重；合并节点时保留自己的规则。
+
+自动部署的 rollback/recover 同时处理配置、证书、首页、续期、DNS 和服务；需要非交互 DNS 恢复时增加 `--token-file /etc/dmit-node/credentials/cloudflare-token`，也可使用原有私密 Token 文件。完成记录绑定材料指纹，现场漂移时拒绝覆盖。先用新程序完成材料恢复，再核对摘要并恢复旧程序，不能直接降级后删除新恢复记录。

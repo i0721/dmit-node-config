@@ -1,6 +1,6 @@
 # 架构与安全边界
 
-nodectl 是 Rust 配置与变更管理器。输入是唯一的 node.toml 与独立 secrets.json；输出包括 Nginx、Xray、systemd、操作清单及客户端分配。安装器只处理 nodectl，普通 render/apply 不操作 DNS、CA 或 WARP 账户。
+nodectl 是 Rust 配置与变更管理器。输入是唯一的 node.toml 与独立 secrets.json；输出包括 Nginx、Xray、systemd、操作清单及客户端分配。Shell 安装器负责引导、验签与 nodectl 原子安装，默认再调用 Rust 部署向导；DNS、CA 和服务事务仍由 Rust 编排。工具安装模式不进入向导，普通 render/apply 不操作 DNS、CA 或 WARP 账户。
 
 ## 数据流
 
@@ -18,6 +18,6 @@ check 校验证书、依赖摘要、真实配置与服务用户权限。apply �
 
 ## 版本和凭据
 
-快照绑定 schema、模板、生成器和输入/输出摘要，并完整重新生成比对。0.2 兼容通过重生成验证的 0.1 模板 v1；未知版本拒绝。Xray 使用 systemd LoadCredential，快照/凭据 owner-only；Nginx root master 读取私钥。第三方原始输出不进入普通错误。
+快照绑定 schema、模板、生成器和输入/输出摘要，并完整重新生成比对。0.3.1 显式接受 0.1/0.2 模板 1 和 0.3.0/0.3.1 模板 2；未知版本拒绝。Xray 使用 systemd LoadCredential，快照/凭据 owner-only；Nginx root master 读取私钥。第三方原始输出不进入普通错误。
 
 见 [安全](security.md)、[配置](configuration.md) 和 [设计决策](decisions/0001-lifecycle-boundaries.md)。

@@ -1,13 +1,13 @@
-# DMIT 交互部署与升级
+# 交互部署与升级
 
-`nodectl deploy` 把现有依赖准备、配置模型、DNS、双证书、可选 WARP 与配置事务串联。`setup/init/render/check/apply` 的手动路径继续可用，模板和 Schema 不变。默认只预览；预览不创建配置、不申请证书、不改 DNS、不接管服务。
+`nodectl deploy` 把现有依赖准备、配置模型、DNS、双证书、可选 WARP 与配置事务串联。默认由一键脚本调用 `nodectl deploy --wizard`，在同一会话收集一次输入、展示计划并确认执行，成功后自动导出客户端。`setup/init/render/check/apply` 的手动路径继续可用，共用同一 Schema、模板和执行逻辑。不带 `--wizard` 的 deploy 默认只预览；预览不创建配置、不申请证书、不改 DNS、不接管服务。
 
 ## 新主机
 
 在 Debian/Ubuntu + systemd 的 DMIT 上以 root 运行。保留供应商控制台和第二个 SSH 会话。防火墙保留现有规则，操作者核实 HTTP TCP 80、HTTPS TCP/UDP 443、REALITY TCP 8443 及自定义 SSH 端口的公网可达性。程序验证本机地址和最终握手，不擅自重置防火墙。
 
 ```sh
-nodectl deploy
+nodectl deploy --wizard
 # 或可重现的非交互预览（替换文档域名与 IP）
 nodectl deploy --non-interactive --domain-suffix example.com \
   --ipv4 203.0.113.10 --ipv6 '' --warp false
@@ -26,7 +26,7 @@ nodectl deploy --dns-zone ZONE_ID --acme-email operator@example.com \
   --accept-ca-terms
 ```
 
-Token 从终端无回显读取；非交互环境用 `--token-file /root/cf-token`（root 所有、0600）。Token 不进入 argv 或项目配置；acme.sh 会按上游机制在私密账户目录保存续期凭据。浏览器登录状态不能替代 DNS API Token。Zone ID 必须为真实 32 位十六进制。
+Token 从终端无回显读取；非交互环境用 `--token-file /root/cf-token`（root 所有、0600）。Token 不进入 argv 或 node.toml；向导授权执行后保存到 owner-only 的 `/etc/dmit-node/credentials/cloudflare-token`，后续向导可复用；acme.sh 会按上游机制在私密账户目录保存续期凭据。浏览器登录状态不能替代 DNS API Token。向导的 Zone ID 默认 auto，通过已有权限匹配区域；手工指定时必须为真实 32 位十六进制。
 
 API 预览列出每个名称的 DNS 差异；仅操作该配置的 A/AAAA，强制灰云。相同记录不更新；更新用 PATCH 保留注释/标签/设置。遇到 CNAME、重复记录、禁用 IPv6 后仍有 AAAA 时拒绝猜测删除，先手动解决再预览。公开 DNS 尚未传播会失败并恢复已记录变更，不能把 API 写入成功当成解析验证成功。
 
@@ -42,7 +42,7 @@ API 预览列出每个名称的 DNS 差异；仅操作该配置的 A/AAAA，强�
 
 ## 预览、授权与执行
 
-预览包含配置、当前快照、服务状态、监听、文件摘要、默认路由、DNS 差异、执行阶段和恢复边界。审阅后将输出的完整 Plan SHA256 加到相同命令：
+预览包含配置、当前快照、服务状态、监听、文件摘要、默认路由、DNS 差异、执行阶段和恢复边界。向导要求在当前终端输入 yes，再在锁内重查程序、主机和 DNS 现状；无终端时拒绝隐式执行。已有非交互接口保留：审阅后将完整 Plan SHA256 加到相同命令：
 
 ```sh
 nodectl deploy --non-interactive --skip-dependencies --manual-certificates
@@ -63,7 +63,7 @@ nodectl deploy --non-interactive --skip-dependencies --manual-certificates
 
 ## 已有服务升级与恢复
 
-对配置有效的 0.1.0/0.2.0 部署直接预览 deploy，保留原始身份并重新生成候选。nodectl 自身的正式升级继续使用签名 `upgrade`，然后执行 deploy；两者没有替换关系。0.1 的快照仍由原完整重生成逻辑校验，缺少首次安装基线时仍拒绝猜测卸载。
+对配置有效的 0.1.0/0.2.0/0.3.0 部署可通过同一安装脚本进入保留配置向导，或直接预览 deploy，保留原始身份并重新生成候选。nodectl 自身的正式升级继续使用签名 `upgrade`，然后执行 deploy；两者没有替换关系。0.1 的快照仍由原完整重生成逻辑校验，缺少首次安装基线时仍拒绝猜测卸载。
 
 没有原始配置、只有散落的 Nginx/Xray 服务时，先保留私密备份并把原 UUID、REALITY 密钥、路径、端口和证书导入有效 node.toml/secrets.json；不得用 init 重新生成身份来冒充兼容迁移。未知格式拒绝自动覆盖。已运行服务和客户端兼容性必须实际验证后再接管。
 

@@ -1,20 +1,14 @@
 # dmit-node-config
 
-Rust CLI `nodectl` 管理 Linux 裸机 Nginx、官方 Xray Core 与可选的独立 usque。单一配置源、确定性生成、脱敏差异、检查收据、真实握手、事务应用与恢复。用户客户端无需安装 WARP。
+一条命令，在 Debian / Ubuntu 上交互部署 Nginx、Xray Core 和可选 WARP。已有部署也使用同一入口更新，优先保留配置和密钥。服务原生运行，由 systemd 管理。
 
-当前源码为 **0.3.1**；是否正式可用以 [Release](https://github.com/i0721/dmit-node-config/releases) 的签名资产为准。源码提交和本地测试不能替代正式资产及下载入口的实际验证。
+当前正式版：[v0.3.1](https://github.com/i0721/dmit-node-config/releases/tag/v0.3.1)。
 
-## 适用范围与系统
+## Linux 一键安装与部署
 
-面向能够管理 Linux、DNS 和证书的运维人员。x86_64 已验证 Debian 12/13、Ubuntu 24.04/26.04 的完整 systemd 生命周期。ARM64 的完整基线为 Debian 12；Ubuntu 24.04 也已通过，Debian 13 的运行日志通过但 CI 在清理阶段取消，Ubuntu 26.04 尚未完成，不能宣称全部 ARM64 系统兼容。离线配置生成不需 root；主机应用需 root。不使用 Docker 或面板承载节点服务。
+**推荐方式：在 VPS 的 SSH 终端复制执行。** 支持 Debian / Ubuntu + systemd，提供 amd64、arm64 安装包。
 
-nodectl 管理配置和服务事务，安装器管理 nodectl。[交互部署与升级](docs/automated-deployment.md) 的 deploy 预览并编排系统软件、DNS、双证书和 WARP 准备，再调用原配置事务；手动分层路径继续保留，render/apply 不暗中执行外部准备。WARP 不接管默认路由，Xray 默认 DMIT 直出。
-
-## 快速开始
-
-下载并执行根目录安装器，在同一次交互中完成安装、配置收集、变更确认、部署及客户端导出。目标主机无需安装 Rust；安装器自动准备并验证官方 cosign。正式 v0.3.1 资产不存在时会停止，不回退到候选文件。
-
-```sh
+```bash
 curl -fL --proto '=https' --proto-redir '=https' \
   --connect-timeout 20 --max-time 1800 \
   -o dmitserverconfig-setup.sh \
@@ -22,41 +16,40 @@ curl -fL --proto '=https' --proto-redir '=https' \
 bash dmitserverconfig-setup.sh
 ```
 
-向导共用原有 Rust 配置和事务，保留手动 DNS、证书及高级分层流程。公网验收后再确认节点上线；旧手动参考见 [高级部署](docs/deployment.md)。文档将在正式资产和真实下载入口验证后补齐发行结果。
+运行后按终端提示填写域名、IP、端口和可选 WARP，选择自动或手动 DNS / 证书，审阅变更并输入 `yes`。脚本会下载并验签正式版，完成部署、服务握手验证及客户端导出。
 
-## 稳定命令与文档
+**更新也运行上面同一条命令。** 安装完成后使用 `nodectl` 管理；客户端文件的私密保存位置会在终端显示。[查看向导填写说明 →](docs/getting-started.md)
 
-| 任务 | 命令/手册 |
+### 开始前准备
+
+- 可公网访问的 VPS、域名，以及 root 或可 sudo 的账号；SSH 终端需有 bash、curl。
+- 使用 Cloudflare 自动 DNS 时，准备目标域名区域的 **DNS Edit + Zone Read** API Token，终端无回显输入；也可选择手动 DNS。
+- 默认需开放 TCP 80、TCP/UDP 443、TCP 8443，并保留自己的 SSH 端口。目标机无需 Rust、Python 或 Docker。
+
+默认主名称为 `speedtest`、REALITY 名称为 `files`，允许修改前缀、域名、端口、双栈及 WARP。新配置启用独立 VLESS Encryption/Vision 参数，提供 Xray 与 Mihomo 节点；已有有效身份、密钥、路径、证书和权重优先保留。公开首页使用中性 Welcome 内容，自定义网站不自动覆盖。
+
+更新时重新执行同一命令。向导显示本次变更，只有确认后才操作 DNS、证书和服务；必要的新 CA/WARP 条款需要明确同意。取消或失败会按保存的事实恢复；系统包和已签发 CA 资源有明确恢复边界。保留手动 DNS、证书与高级运维路径。
+
+## 系统与验收
+
+发行资产为 Linux amd64、arm64，使用 Debian 12 glibc 基线原生构建。手动系统矩阵包含 amd64 Debian 12/13、Ubuntu 24.04/26.04，以及 arm64 Debian 12；本次实际执行、取消及未覆盖的范围见 [交付验收](docs/defect/08-one-command-delivery.md)。
+
+版本锁定、TLS/H2/H3、双域名与 IP 证书、独立 WARP 路由和原事务校验继续保留。WARP 不接管默认出口，用户客户端无需安装 WARP。修改客户端兼容字段时必须更新客户端。
+
+## 文档
+
+| 任务 | 入口 |
 | --- | --- |
-| 安装、签名验证、两个架构 | [installation](docs/installation.md)、install.sh |
-| 首次成功路径 | [getting-started](docs/getting-started.md)、setup、doctor |
-| 交互自动部署、保留配置升级 | [automated-deployment](docs/automated-deployment.md)、deploy |
-| 字段与 schema 迁移 | [configuration](docs/configuration.md)、validate、migrate |
-| 预览与事务 | render、diff、check、takeover、apply |
-| 状态、升级与卸载 | status、upgrade、uninstall；默认预览 |
-| 恢复、续期、监控、备份 | [operations](docs/operations.md)、rollback、recover、renew-hook |
-| 按症状排错 | [troubleshooting](docs/troubleshooting.md) |
-| 架构、威胁模型 | [architecture](docs/architecture.md)、[security](docs/security.md)、[ADR](docs/decisions/0001-lifecycle-boundaries.md) |
-| 完整参考与通用图解 | [deployment](docs/deployment.md)、[visual-guide](docs/visual-guide.md) |
-| 贡献与漏洞 | [CONTRIBUTING](CONTRIBUTING.md)、[SECURITY](SECURITY.md)、[行为准则](CODE_OF_CONDUCT.md) |
+| 首次部署、向导输入与完成标准 | [首次部署](docs/getting-started.md) |
+| 固定版本、工具安装、离线资产和验签 | [安装与发行](docs/installation.md) |
+| DNS、证书、接管与自动恢复细节 | [交互部署](docs/automated-deployment.md) |
+| 客户端、续期、备份与恢复 | [日常运维](docs/operations.md) |
+| 手动分层操作与字段 | [高级部署参考](docs/deployment.md)、[配置说明](docs/configuration.md) |
+| 图解与故障定位 | [脱敏 DNS 图解](docs/cloudflare-screenshots.md)、[排错](docs/troubleshooting.md) |
+| 实现与贡献 | [架构](docs/architecture.md)、[安全](docs/security.md)、[贡献](CONTRIBUTING.md) |
 
-## 兼容与安全
-
-Schema v1；0.1/0.2 快照保留模板 1，0.3.0/0.3.1 使用模板 2，严格验证原始摘要。配置与凭据 owner-only，Xray 使用 systemd LoadCredential。首次 apply 保存原入口与服务状态；卸载还原这些事实，默认保留数据。0.1 安装缺完整基线时拒绝自动卸载，不能猜测原服务状态。
-
-工具升级不升级代理依赖。Xray 锁定的 v26.10.10 为预发布，必须实机验收，不把锁定摘要当成稳定性承诺。失败时保留日志与备份，先 recover；不要删除未恢复事务。
+公开教程使用 example.com 和保留地址；脱敏图片不是生产验收证据。凭据与原始环境记录不随仓库发布。
 
 ## 开发
 
-```sh
-cargo test --locked
-cargo fmt --check
-cargo clippy --locked --all-targets -- -D warnings
-cargo build --release --locked
-```
-
-固定 Rust 1.99.1 和 Cargo.lock。复用 GitHub 开源库，依赖及许可证见 [THIRD_PARTY](THIRD_PARTY.md)。历史设计入口 [plan.md](plan.md) 已指向正式架构；缺口任务见 [实施方案](docs/defect/02-implementation-plan.md)。
-
-项目主动开发/构建/测试/发布流程不再需要 Python。仓库检查、锁定下载、许可证收集、发行兼容测试及 TLS 测试探针由 Rust `repo-tools` 提供；入口为 `bash scripts/check-all.sh`。
-
-全量 GitHub 系统集成改为手动触发，避免重复本地已完成的测试。正式发行仅执行原生构建、归档检查、SBOM、签名及来源证明；被取消或未执行的矩阵不视为通过。
+全量 GitHub 测试按需手动触发，正式发行仅打包、检查归档并签名，不重复系统矩阵。固定 Rust 1.99.1、Cargo.lock，执行 `bash scripts/check-all.sh`；服务事务变更还需运行隔离集成与恢复测试。项目自身开发、构建、测试、发布和运行不依赖 Python。依赖及许可见 [THIRD_PARTY](THIRD_PARTY.md)，问题与漏洞见 [SECURITY](SECURITY.md)。

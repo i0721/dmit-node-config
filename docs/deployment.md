@@ -1,4 +1,6 @@
-# 从 Cloudflare 到 DMIT 节点的完整部署教程
+# 高级参考：手动分层部署
+
+首次部署和保留配置更新，请直接使用 [README 的一键安装命令](../README.md#linux-一键安装与部署)。本页供需要逐层控制和排错的运维人员参考，无需按本页逐条执行才能完成一键部署。
 
 核对日期：2026-10-16。本文对应仓库当前 `nodectl`、[全局配置示例](../config/node.example.toml) 和 [版本锁定清单](../versions.lock.toml)。默认环境为一台全新的 Debian 12/13、Linux amd64、systemd 主机；Ubuntu 用户使用对应的软件源。已有服务的主机先按第 1 节盘点，不能直接当新机器覆盖。
 

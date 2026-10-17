@@ -1,23 +1,29 @@
-# 首次成功部署
+# 首次部署
 
-先按 [安装](installation.md) 获得 nodectl。已有业务必须盘点、备份并保留 SSH 与供应商控制台。完整逐步命令见 [部署参考](deployment.md)。
+从 [README 的一键命令](../README.md#linux-一键安装与部署) 开始。它会安装正式发行版并直接进入完整向导，以下步骤描述同一会话中的输入和结果。
 
-自动交互方式使用 [deploy](automated-deployment.md)，先输出主机差异与 Plan SHA256，经授权再执行。下文保留同一配置模型的手动流程。
+## 准备
 
-1. 准备锁定的 Xray、具备 H2/H3 的 Nginx、可选 usque、OpenSSL、curl 和 systemd。创建 xray/www-data 与日志、网站、证书目录；只添加必要防火墙规则，不重置规则。
-2. 预览配置（必须将占位符换成实际值）：
+使用支持的 Debian/Ubuntu + systemd，以 root 或可 sudo 的用户连接。准备可用域名及 IP，保留 SSH 会话和供应商控制台。核实 HTTP TCP 80、HTTPS TCP/UDP 443、REALITY TCP 8443 与实际 SSH 端口可达；程序不重置防火墙。
 
-```sh
-nodectl setup --non-interactive --domain speedtest.example.com \
-  --reality-domain files.example.com \
-  --ipv4 203.0.113.10
-```
+Cloudflare 自动模式使用限定实际区域的 DNS Edit + Zone Read Token。已有网站、服务和配置会先盘点；仅有散落服务而缺少原始身份配置时，须导入经过验证的配置后再接管，不能自动生成新身份冒充兼容升级。
 
-省略域名/IP 选项时交互输入，`--warp` 显式启用 WARP。审阅后加 `--execute` 原子创建同一套配置与真实随机凭据。已有输入不会被覆盖。
+## 跟随向导
 
-3. 按 [DNS](deployment.md#2-cloudflare-dns-与域名接入) 创建仅 DNS 的 A/可选 AAAA，授权单区域续期 Token。申请 P-384 域名证书，再用临时 HTTP webroot 申请短期 IP 证书。所有启用地址都必须公网可达。
-4. 启用 WARP 时单独注册、保护并测试 usque，不接管默认路由；用户客户端无需 WARP。
-5. 执行 doctor，修复所有失败项，然后 validate、render、diff、check。参考客户端摘要来自受信任安装记录。已有入口先显式 takeover，再退出临时 HTTP 服务并 apply。
-6. apply 成功后从外部验证 H2/H3、裸 IP TLS 和三类握手，保存部署记录。两套证书配置 renew-hook 和 cron，设置 48 小时到期余量检查。
+1. 脚本识别系统与架构，准备缺少的引导工具，下载并验签正式资产。此阶段不改 DNS、证书或运行服务。
+2. 填根域名和可选前缀，确认 TLS/REALITY 两个名称。默认是 speedtest/files；默认别名为空。
+3. 确认 IP、端口与可选 WARP。多地址需要明确选择；没有 IPv6 时输入 `-`。WARP 默认值继承平台基线，并保持独立路由。
+4. 选择 Cloudflare 或手动 DNS。Token 无回显输入，Zone 默认自动识别，也可填写 Zone ID。已有私密凭据可复用。
+5. 选择自动或手动证书。新 CA 账户需邮箱和条款确认；新 WARP 设备注册也需确认对应条款。有效的已有账户、证书与密钥优先复用。
+6. 审阅完整计划，包括 DNS 差异、证书、凭据保存、接管、维护中断、兼容性与恢复边界。输入 `yes` 后执行；现状漂移会阻止应用。
+7. 程序准备依赖、配置 DNS/双证书/WARP，生成并校验配置，应用服务并验证三种传输。只有全部成功才输出完成及客户端保存位置。
 
-setup 不暗中修改 DNS、申请证书或接管服务；外部步骤逐项预览与审阅。日常命令、备份与失败恢复见 [运维](operations.md)，错误处理见 [故障排查](troubleshooting.md)。
+取消或失败会恢复本次程序和部署变更；已安装引导包、系统包数据库与已签发 CA 资源可能保留。存在未恢复事务时必须先恢复，不能删日志重试。
+
+## 完成与更新
+
+成功后获取受保护目录中的 `profiles.json`、`proxies.yaml`、`weights.json`。Mihomo 文件是节点片段，合并到自己的配置并保留规则。不要把客户端凭据粘贴到公开仓库或截图。
+
+首次公网连接还需核实客户端内核兼容及真实 TCP/UDP/QUIC；服务握手成功不等于已经验证所有外部网络。自然续期周期、IPv6 外部路径等按实际记录验收。
+
+后续更新重复运行同一安装命令；已有有效配置优先保留，不自动轮换身份或开启旧配置中缺省的 Encryption。工具安装及显式审批接口见 [安装说明](installation.md)，自动化细节见 [交互部署](automated-deployment.md)，手动步骤见 [高级参考](deployment.md)。
