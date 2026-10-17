@@ -13,7 +13,11 @@ mkdir -p "$prefix/bin" "$prefix/legacy-inputs"
 test "$("$legacy" --version)" = 'nodectl 0.1.0'
 install -m 0755 "$legacy" "$prefix/bin/nodectl"
 legacy_hash=$(sha256sum "$prefix/bin/nodectl" | cut -d ' ' -f 1)
-python3 scripts/release-smoke.py "$prefix/bin/nodectl" "$prefix/legacy-inputs"
+if [ -n "${NODECTL_REPO_TOOLS:-}" ]; then
+  "$NODECTL_REPO_TOOLS" release-smoke "$prefix/bin/nodectl" "$prefix/legacy-inputs"
+else
+  cargo run --quiet --locked --bin repo-tools -- release-smoke "$prefix/bin/nodectl" "$prefix/legacy-inputs"
+fi
 config_hash=$(sha256sum "$prefix/legacy-inputs/config/"* | sha256sum | cut -d ' ' -f 1)
 args=(--version "$version" --prefix "$prefix" --bundle-dir "$bundle" --config-dir "$prefix/legacy-inputs/config")
 sh "$script" "${args[@]}" --execute

@@ -1,5 +1,9 @@
 # No implicit downloads or upgrades. Cargo.lock pins all Rust dependencies.
 # check records SHA256 of installed executables. apply refuses changed files.
+[go]
+version = "1.27.2"
+metadata_url = "https://go.dev/dl/?mode=json&include=all"
+
 [xray]
 repository = "https://github.com/XTLS/Xray-core"
 version = "26.10.10"

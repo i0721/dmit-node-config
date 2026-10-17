@@ -333,6 +333,7 @@ pub fn status(store: &Store, as_json: bool) -> Result<()> {
     let report = json!({"tool_version":env!("CARGO_PKG_VERSION"), "current":current,"current_integrity":current_valid,
         "previous":previous,"pending_transaction":store.state_dir.join("transaction.json").exists(),
         "pending_uninstall":store.state_dir.join("uninstall.json").exists(),
+        "pending_provisioning":store.state_dir.join("deployment.json").exists(),
         "check_receipt_present":checked,"last_check_unix_seconds":checked_at,"certificates_valid_24h":certs,"services":services});
     if as_json {
         println!("{}", serde_json::to_string_pretty(&report)?);
@@ -348,6 +349,7 @@ pub fn status(store: &Store, as_json: bool) -> Result<()> {
             report["pending_transaction"],
             report["pending_uninstall"]
         );
+        println!("Pending provisioning: {}", report["pending_provisioning"]);
         for (name, state) in services {
             println!("{name}: {state}");
         }

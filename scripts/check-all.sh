@@ -3,9 +3,10 @@ set -euo pipefail
 cargo fmt --check
 cargo test --locked
 cargo clippy --locked --all-targets --all-features -- -D warnings
-cargo run --quiet --locked -- schema > /tmp/nodectl-schema.json
+cargo run --quiet --locked --bin nodectl -- schema > /tmp/nodectl-schema.json
 diff -u schemas/node.schema.json /tmp/nodectl-schema.json
-python3 scripts/check-docs.py
+cargo run --quiet --locked --bin repo-tools -- check-docs
 sh -n install.sh
 for script in scripts/*.sh; do bash -n "$script"; done
-python3 scripts/check-workflows.py
+cargo run --quiet --locked --bin repo-tools -- check-workflows
+cargo run --quiet --locked --bin repo-tools -- check-native

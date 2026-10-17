@@ -3,7 +3,7 @@ set -euo pipefail
 umask 077
 cd /work
 bash tests/integration/prepare.sh
-python3 tests/integration/probe.py > /root/nodectl-test/probe.log 2>&1 &
+/integration-target/debug/repo-tools probe > /root/nodectl-test/probe.log 2>&1 &
 probe=$!
 trap 'kill "$probe" 2>/dev/null || true' EXIT
 check() {
@@ -101,4 +101,48 @@ test -f /etc/ssl/dmit/domain/privkey.pem
 test -d /var/lib/dmit-node/backups
 curl --fail --silent http://127.0.0.1:9081/ | grep -q legacy-service
 echo 'UPGRADE_CONFIG_ROLLBACK_UNINSTALL_RESTORE_PASS'
+
+# The automatic path uses the same real systemd/services/CA and a local DNS fixture.
+ip4=$(ip -4 -j address show dev eth0 | /integration-target/debug/repo-tools ipv4)
+dnsmasq --no-daemon --conf-file=/dev/null --port=1053 --listen-address=127.0.0.1 --bind-interfaces --no-resolv --no-hosts --address="/.integration.test/$ip4" --address=/.integration.test/::1 > /root/nodectl-test/dns.log 2>&1 &
+dns=$!
+trap 'kill "$probe" "$dns" 2>/dev/null || true' EXIT
+export NODECTL_TEST_DNS=yes
+for _ in $(seq 1 20); do [ "$(dig +short -p 1053 @127.0.0.1 node.integration.test A)" = "$ip4" ] && break; sleep 1; done
+test "$(dig +short -p 1053 @127.0.0.1 node.integration.test A)" = "$ip4"
+auto=(--non-interactive --skip-dependencies --manual-certificates --takeover --probe-url https://127.0.0.1:9443/)
+nodectl deploy "${auto[@]}" > /root/nodectl-test/deploy-preview.txt
+approved=$(sed -n 's/^Plan SHA256: //p' /root/nodectl-test/deploy-preview.txt)
+test "${#approved}" = 64
+secret_before=$(sha256sum /etc/dmit-node/secrets.json)
+if nodectl deploy "${auto[@]}" --execute --approve invalid > /root/nodectl-test/stale-approval.log 2>&1; then echo 'Invalid approval accepted' >&2; exit 1; fi
+test ! -e /var/lib/dmit-node/deployment.json
+nodectl deploy "${auto[@]}" --execute --approve "$approved" > /root/nodectl-test/deploy-execute.txt
+test "$(sha256sum /etc/dmit-node/secrets.json)" = "$secret_before"
+auto_current=$(basename "$(readlink /var/lib/dmit-node/current)")
+sed 's/alt_svc_max_age = 3600/alt_svc_max_age = 7200/' /etc/dmit-node/node.toml > /root/nodectl-test/candidate.toml
+chmod 0600 /root/nodectl-test/candidate.toml
+auto+=(--input /root/nodectl-test/candidate.toml)
+nodectl deploy "${auto[@]}" > /root/nodectl-test/deploy-preview.txt
+approved=$(sed -n 's/^Plan SHA256: //p' /root/nodectl-test/deploy-preview.txt)
+if NODECTL_FAILPOINT=nginx nodectl deploy "${auto[@]}" --execute --approve "$approved" > /root/nodectl-test/deploy-failure.txt 2>&1; then echo 'Automatic failure not injected' >&2; exit 1; fi
+test ! -e /var/lib/dmit-node/deployment.json
+test "$(basename "$(readlink /var/lib/dmit-node/current)")" = "$auto_current"
+grep -q 'alt_svc_max_age = 3600' /etc/dmit-node/node.toml
+systemctl is-active --quiet nginx xray
+nodectl deploy "${auto[@]}" > /root/nodectl-test/deploy-preview.txt
+approved=$(sed -n 's/^Plan SHA256: //p' /root/nodectl-test/deploy-preview.txt)
+if NODECTL_DEPLOY_FAILPOINT=journal nodectl deploy "${auto[@]}" --execute --approve "$approved" > /root/nodectl-test/deploy-interrupted.txt 2>&1; then exit 1; fi
+test -f /var/lib/dmit-node/deployment.json
+if nodectl render > /root/nodectl-test/deploy-blocked.txt 2>&1; then echo 'Provisioning journal bypassed' >&2; exit 1; fi
+nodectl recover
+test ! -e /var/lib/dmit-node/deployment.json
+test "$(sha256sum /etc/dmit-node/secrets.json)" = "$secret_before"
+nodectl deploy "${auto[@]}" > /root/nodectl-test/deploy-preview.txt
+approved=$(sed -n 's/^Plan SHA256: //p' /root/nodectl-test/deploy-preview.txt)
+nodectl deploy "${auto[@]}" --execute --approve "$approved" > /root/nodectl-test/deploy-upgrade.txt
+grep -q 'alt_svc_max_age = 7200' /etc/dmit-node/node.toml
+nodectl uninstall --execute
+curl --fail --silent http://127.0.0.1:9081/ | grep -q legacy-service
+echo 'AUTOMATED_PREVIEW_APPROVAL_IDENTITY_UPGRADE_FAILURE_RECOVERY_PASS'
 echo 'INTEGRATION_PASS'

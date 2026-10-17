@@ -14,7 +14,7 @@ printf 'integration-ready\n' > /var/www/html/index.html
 chmod 0644 /var/www/html/index.html
 openssl req -new -x509 -nodes -newkey ec -pkeyopt ec_paramgen_curve:P-384 -keyout /root/nodectl-test/ca.key -out /usr/local/share/ca-certificates/nodectl-test.crt -days 3 -subj /CN=nodectl-isolated-test-CA -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign >/dev/null 2>&1
 update-ca-certificates >/dev/null 2>&1
-ip4=$(ip -4 -j address show dev eth0 | python3 -c 'import json,sys;print(json.load(sys.stdin)[0]["addr_info"][0]["local"])')
+ip4=$(ip -4 -j address show dev eth0 | /integration-target/debug/repo-tools ipv4)
 for kind in domain ip; do
   curve=P-384; [ "$kind" = ip ] && curve=prime256v1
   openssl req -new -nodes -newkey ec -pkeyopt "ec_paramgen_curve:$curve" -keyout "/etc/ssl/dmit/$kind/privkey.pem" -out "/root/nodectl-test/$kind.csr" -subj /CN=node.integration.test >/dev/null 2>&1

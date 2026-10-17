@@ -9,4 +9,4 @@ chmod 0644 /usr/share/keyrings/nginx-archive-keyring.gpg
 printf 'deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] https://nginx.org/packages/%s %s nginx\n' "$ID" "$VERSION_CODENAME" > /etc/apt/sources.list.d/nginx.list
 apt-get update
 apt-get install -y nginx
-python3 /work/scripts/download-xray.py /usr/local/bin/xray
+/integration-target/debug/repo-tools download-xray /usr/local/bin/xray

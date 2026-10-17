@@ -4,6 +4,8 @@
 
 配套资源：[通用图解](visual-guide.md) · [部署记录模板](resources/deployment-record.template.md)。图解为工程示意，实际服务器必须执行验收。首次使用优先阅读 [快速开始](getting-started.md)，本页保留完整参考步骤。
 
+本轮另有 [nekobox.page 真实 Cloudflare 操作截图](cloudflare-screenshots.md)，包含 DNS 名称检查、A/AAAA 灰云表单和 Token 权限草稿；草稿与实际保存状态分别标注。自动编排入口见 [交互部署与升级](automated-deployment.md)。
+
 ## 目录与执行顺序
 
 1. [命名、现状与准备](#1-命名现状与准备)

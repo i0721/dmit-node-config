@@ -2,6 +2,8 @@
 
 先按 [安装](installation.md) 获得 nodectl。已有业务必须盘点、备份并保留 SSH 与供应商控制台。完整逐步命令见 [部署参考](deployment.md)。
 
+自动交互方式使用 [deploy](automated-deployment.md)，先输出主机差异与 Plan SHA256，经授权再执行。下文保留同一配置模型的手动流程。
+
 1. 准备锁定的 Xray、具备 H2/H3 的 Nginx、可选 usque、OpenSSL、curl 和 systemd。创建 xray/www-data 与日志、网站、证书目录；只添加必要防火墙规则，不重置规则。
 2. 预览配置（必须将占位符换成实际值）：
 

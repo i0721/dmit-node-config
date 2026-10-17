@@ -98,7 +98,8 @@ impl Store {
         let file = self.recovery_lock()?;
         ensure!(
             !self.state_dir.join("transaction.json").exists()
-                && !self.state_dir.join("uninstall.json").exists(),
+                && !self.state_dir.join("uninstall.json").exists()
+                && !self.state_dir.join("deployment.json").exists(),
             "An interrupted deployment exists: run nodectl recover (see README recovery)"
         );
         Ok(file)

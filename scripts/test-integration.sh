@@ -17,8 +17,10 @@ cleanup() {
 }
 trap cleanup EXIT
 echo "Building clean $base integration environment..."
-docker build --network host --build-arg BASE="$base" -f tests/integration/Dockerfile -t "nodectl-integration:$label" . > "$build_log" 2>&1 || { tail -50 "$build_log"; exit 1; }
-docker build --network host -f tests/integration/Dockerfile.h3 -t nodectl-integration-h3 . >> "$build_log" 2>&1 || { tail -50 "$build_log"; exit 1; }
+proxy_args=()
+for key in HTTP_PROXY HTTPS_PROXY NO_PROXY; do [ -z "${!key:-}" ] || proxy_args+=(--build-arg "$key"); done
+docker build --network host "${proxy_args[@]}" --build-arg BASE="$base" -f tests/integration/Dockerfile -t "nodectl-integration:$label" . > "$build_log" 2>&1 || { tail -50 "$build_log"; exit 1; }
+docker build --network host "${proxy_args[@]}" -f tests/integration/Dockerfile.h3 -t nodectl-integration-h3 . >> "$build_log" 2>&1 || { tail -50 "$build_log"; exit 1; }
 docker run --detach --tty --name "$name" --label nodectl.isolated-test=true --privileged --cgroupns=host --env container=docker --tmpfs /run --tmpfs /run/lock --tmpfs /tmp -v /sys/fs/cgroup:/sys/fs/cgroup:rw "nodectl-integration:$label" >/dev/null
 ready=no
 for _ in $(seq 1 60); do

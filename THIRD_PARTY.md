@@ -12,6 +12,10 @@
 | libc | 0.2.190 | MIT OR Apache-2.0 | [source](https://github.com/rust-lang/libc) |
 | minijinja | 2.24.0 | Apache-2.0 | [source](https://github.com/mitsuhiko/minijinja) |
 | rand | 0.8.8 | MIT OR Apache-2.0 | [source](https://github.com/rust-random/rand) |
+| regex | 1.13.1 | MIT OR Apache-2.0 | [source](https://github.com/rust-lang/regex) |
+| percent-encoding | 2.3.2 | MIT OR Apache-2.0 | [source](https://github.com/servo/rust-url) |
+| unicode-general-category | 1.1.0 | Apache-2.0 | [source](https://github.com/yeslogic/unicode-general-category) |
+| rustls | 0.23.46 | Apache-2.0 OR ISC OR MIT | [source](https://github.com/rustls/rustls) |
 | schemars | 0.8.22 | MIT | [source](https://github.com/GREsau/schemars) |
 | serde | 1.0.229 | MIT OR Apache-2.0 | [source](https://github.com/serde-rs/serde) |
 | serde_json | 1.0.154 | MIT OR Apache-2.0 | [source](https://github.com/serde-rs/json) |

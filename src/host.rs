@@ -22,7 +22,7 @@ use std::{
 pub fn command(binary: &str, args: &[&str]) -> Result<String> {
     String::from_utf8(run(binary, args, None)?).context("Tool returned invalid UTF-8")
 }
-fn run(binary: &str, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>> {
+pub(crate) fn run(binary: &str, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>> {
     run_capture(binary, args, input, false)
 }
 pub(crate) fn command_stderr(binary: &str, args: &[&str]) -> Result<String> {
@@ -42,7 +42,8 @@ fn run_capture(
     }
     use std::io::{Seek, SeekFrom};
     stdin.seek(SeekFrom::Start(0))?;
-    let mut child = Command::new(binary)
+    let mut process = Command::new(binary);
+    process
         .args(args)
         .env_clear()
         .env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin")
@@ -53,7 +54,9 @@ fn run_capture(
             out.try_clone()?
         } else {
             err
-        })
+        });
+    crate::provision::inherit_lease(&mut process);
+    let mut child = process
         .spawn()
         .with_context(|| format!("Cannot start tool {binary}"))?;
     let start = Instant::now();
@@ -79,7 +82,7 @@ fn run_capture(
     out.take(4 * 1024 * 1024).read_to_end(&mut result)?;
     Ok(result)
 }
-fn linux_root() -> Result<()> {
+pub(crate) fn linux_root() -> Result<()> {
     ensure!(
         cfg!(target_os = "linux"),
         "Host operations require Linux with systemd"
@@ -183,10 +186,16 @@ fn dependencies(c: &Config, reference: &Reference) -> Result<BTreeMap<String, St
 }
 
 pub(crate) fn certificates(c: &Config) -> Result<()> {
+    certificates_part(c, None)
+}
+pub(crate) fn certificates_part(c: &Config, only_ip: Option<bool>) -> Result<()> {
     for (dir, sans, is_ip) in [
         (&c.tls.domain_cert_dir, c.domains(), false),
         (&c.tls.ip_cert_dir, c.ips(), true),
     ] {
+        if only_ip.is_some_and(|only| only != is_ip) {
+            continue;
+        }
         let cert = format!("{dir}/fullchain.pem");
         let key = format!("{dir}/privkey.pem");
         store::check_private(Path::new(&key), false)?;
@@ -421,7 +430,7 @@ fn receipt(store: &Store, id: &str) -> Result<Receipt> {
     Ok(r)
 }
 
-const ENTRIES: [(&str, &str); 5] = [
+pub(crate) const ENTRIES: [(&str, &str); 5] = [
     ("/etc/xray/config.json", "xray.json"),
     ("/etc/nginx/nginx.conf", "nginx.conf"),
     ("/etc/systemd/system/xray.service", "systemd/xray.service"),
@@ -431,7 +440,7 @@ const ENTRIES: [(&str, &str); 5] = [
         "systemd/usque-warp.service",
     ),
 ];
-const SERVICES: [&str; 3] = ["xray", "nginx", "usque-warp"];
+pub(crate) const SERVICES: [&str; 3] = ["xray", "nginx", "usque-warp"];
 
 fn checkpoint(_name: &str) -> Result<()> {
     #[cfg(feature = "integration-test")]
@@ -460,9 +469,9 @@ enum Entry {
     },
 }
 #[derive(Clone, Serialize, Deserialize)]
-struct Service {
-    active: bool,
-    enabled: String,
+pub(crate) struct Service {
+    pub(crate) active: bool,
+    pub(crate) enabled: String,
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Transaction {
@@ -591,7 +600,7 @@ fn authorized(
     Ok(())
 }
 
-fn service_state(name: &str) -> Result<Service> {
+pub(crate) fn service_state(name: &str) -> Result<Service> {
     let load = command("systemctl", &["show", name, "-p", "LoadState", "--value"])?;
     let enabled = if load.trim() == "not-found" {
         "disabled".into()
@@ -626,7 +635,7 @@ fn service_state(name: &str) -> Result<Service> {
     })
 }
 
-fn default_routes(ipv6: bool) -> Result<String> {
+pub(crate) fn default_routes(ipv6: bool) -> Result<String> {
     let output = command(
         "ip",
         &[
@@ -1133,6 +1142,15 @@ fn handshake(c: &Config, s: &Secrets, reference: &Reference, kind: &str) -> Resu
         )
         .map(|_| ())
     })
+}
+
+pub(crate) fn previous_clients(store: &Store, old: &str, reference: &Reference) -> Result<()> {
+    let (c, s) = store.verify(old)?;
+    for kind in ["xhttp", "ws", "reality"] {
+        handshake(&c, &s, reference, kind)
+            .with_context(|| format!("Previous {kind} client no longer connects after upgrade"))?;
+    }
+    Ok(())
 }
 
 pub fn renew(store: &Store) -> Result<()> {

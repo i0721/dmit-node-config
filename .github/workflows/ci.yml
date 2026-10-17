@@ -26,7 +26,7 @@ jobs:
         with: {command: check advisories licenses sources}
       - name: Official Xray compatibility
         run: |
-          python3 scripts/download-xray.py /tmp/nodectl-xray
+          cargo run --quiet --locked --bin repo-tools -- download-xray /tmp/nodectl-xray
           XRAY_TEST_BINARY=/tmp/nodectl-xray cargo test --locked upstream_xray_accepts -- --ignored
   secrets:
     runs-on: ubuntu-24.04

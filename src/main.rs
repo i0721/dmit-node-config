@@ -1,6 +1,10 @@
+mod artifacts;
 mod config;
+mod deploy;
 mod diagnostics;
+mod dns;
 mod host;
+mod provision;
 mod render;
 mod setup;
 mod store;
@@ -37,6 +41,8 @@ enum Action {
     },
     /// Preview or explicitly create the single source of configuration.
     Setup(setup::Setup),
+    /// Preview or run a DMIT deployment, preserving existing inputs and using apply transactions.
+    Deploy(deploy::Deploy),
     /// Validate schema compatibility; unsupported schemas are never rewritten.
     Migrate,
     /// Install a signed exact tool version; preview unless --execute is supplied.
@@ -112,6 +118,7 @@ fn run() -> Result<()> {
         Action::Doctor { json } => diagnostics::doctor(&store, json)?,
         Action::Status { json } => diagnostics::status(&store, json)?,
         Action::Setup(setup) => setup::run(&store, setup)?,
+        Action::Deploy(deploy) => deploy::run(&store, deploy)?,
         Action::Migrate => {
             let _guard = store.lock()?;
             diagnostics::migrate(&store)?;
@@ -179,7 +186,12 @@ fn run() -> Result<()> {
         }
         Action::Recover => {
             let _guard = store.recovery_lock()?;
-            host::recover(&store)?;
+            let _lease = provision::Lease::hold(&_guard);
+            if store.state_dir.join("deployment.json").exists() {
+                deploy::recover(&store)?;
+            } else {
+                host::recover(&store)?;
+            }
             println!("Interrupted deployment restored and verified.");
         }
         Action::Takeover { release } => {
