@@ -2,7 +2,7 @@
 
 Rust CLI `nodectl` 管理 Linux 裸机 Nginx、官方 Xray Core 与可选的独立 usque。单一配置源、确定性生成、脱敏差异、检查收据、真实握手、事务应用与恢复。用户客户端无需安装 WARP。
 
-当前工作树为 **0.2.0 候选版**；正式发布和系统矩阵以 [Release](https://github.com/i0721/dmit-node-config/releases) 及 [缺口验收记录](docs/defect/03-results.md) 为准。当前源码不能替代正式资产和签名的实际验证。
+当前源码为 **0.3.1**；是否正式可用以 [Release](https://github.com/i0721/dmit-node-config/releases) 的签名资产为准。源码提交和本地测试不能替代正式资产及下载入口的实际验证。
 
 ## 适用范围与系统
 
@@ -12,19 +12,17 @@ nodectl 管理配置和服务事务，安装器管理 nodectl。[交互部署与
 
 ## 快速开始
 
-从正式 Release 获取并审阅 install.sh，准备官方 cosign、curl、tar 和 sha256sum。目标主机无需安装 Rust。
+下载并执行根目录安装器，在同一次交互中完成安装、配置收集、变更确认、部署及客户端导出。目标主机无需安装 Rust；安装器自动准备并验证官方 cosign。正式 v0.3.1 资产不存在时会停止，不回退到候选文件。
 
 ```sh
-sh install.sh --version v0.2.0 --dry-run
-sudo sh install.sh --version v0.2.0 --execute
-nodectl setup --non-interactive --domain node.example.com \
-  --reality-domain reality.example.com --ipv4 203.0.113.10
-# 将占位符替换成真实输入，审阅后加 --execute 创建配置
-nodectl doctor
-nodectl status
+curl -fL --proto '=https' --proto-redir '=https' \
+  --connect-timeout 20 --max-time 1800 \
+  -o dmitserverconfig-setup.sh \
+  https://raw.githubusercontent.com/i0721/dmit-node-config/main/install.sh &&
+bash dmitserverconfig-setup.sh
 ```
 
-按 [首次部署](docs/getting-started.md) 准备依赖、DNS 和双证书，再 validate → render → diff → check → takeover（已有入口时）→ apply。公网验收后配置自动续期和监控。不能把 setup 成功当成节点已上线。
+向导共用原有 Rust 配置和事务，保留手动 DNS、证书及高级分层流程。公网验收后再确认节点上线；旧手动参考见 [高级部署](docs/deployment.md)。文档将在正式资产和真实下载入口验证后补齐发行结果。
 
 ## 稳定命令与文档
 
@@ -44,7 +42,7 @@ nodectl status
 
 ## 兼容与安全
 
-schema/template v1；0.2 重生成验证兼容的 0.1 快照。配置与凭据 owner-only，Xray 使用 systemd LoadCredential。首次 apply 保存原入口与服务状态；卸载还原这些事实，默认保留数据。0.1 安装缺完整基线时拒绝自动卸载，不能猜测原服务状态。
+Schema v1；0.1/0.2 快照保留模板 1，0.3.0/0.3.1 使用模板 2，严格验证原始摘要。配置与凭据 owner-only，Xray 使用 systemd LoadCredential。首次 apply 保存原入口与服务状态；卸载还原这些事实，默认保留数据。0.1 安装缺完整基线时拒绝自动卸载，不能猜测原服务状态。
 
 工具升级不升级代理依赖。Xray 锁定的 v26.10.10 为预发布，必须实机验收，不把锁定摘要当成稳定性承诺。失败时保留日志与备份，先 recover；不要删除未恢复事务。
 
@@ -60,3 +58,5 @@ cargo build --release --locked
 固定 Rust 1.99.1 和 Cargo.lock。复用 GitHub 开源库，依赖及许可证见 [THIRD_PARTY](THIRD_PARTY.md)。历史设计入口 [plan.md](plan.md) 已指向正式架构；缺口任务见 [实施方案](docs/defect/02-implementation-plan.md)。
 
 项目主动开发/构建/测试/发布流程不再需要 Python。仓库检查、锁定下载、许可证收集、发行兼容测试及 TLS 测试探针由 Rust `repo-tools` 提供；入口为 `bash scripts/check-all.sh`。
+
+全量 GitHub 系统集成改为手动触发，避免重复本地已完成的测试。正式发行仅执行原生构建、归档检查、SBOM、签名及来源证明；被取消或未执行的矩阵不视为通过。

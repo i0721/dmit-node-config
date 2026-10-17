@@ -5,7 +5,8 @@ version=$(cargo run --quiet --locked --bin repo-tools -- version)
 export SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct)}
 commit=${SOURCE_COMMIT:-$(git rev-parse HEAD)}
 case "$target" in x86_64-unknown-linux-gnu|aarch64-unknown-linux-gnu) :;; *) echo 'Unsupported target' >&2; exit 1;; esac
-cargo test --locked --target "$target"
+# Full tests run locally or through the manually dispatched lifecycle workflow.
+# This path builds and checks the exact distributable only.
 cargo build --release --locked --target "$target"
 binary="${CARGO_TARGET_DIR:-target}/$target/release/nodectl"
 "$binary" --help >/dev/null

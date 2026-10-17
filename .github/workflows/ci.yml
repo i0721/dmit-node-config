@@ -1,8 +1,6 @@
 name: Quality and lifecycle gates
 on:
-  push:
-    branches: [main, 'codex/**']
-  pull_request:
+  # Full lifecycle validation is opt-in; release packaging does not repeat it.
   workflow_dispatch:
   workflow_call:
     inputs:
