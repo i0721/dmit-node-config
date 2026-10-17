@@ -88,8 +88,9 @@ pub fn run(store: &Store, setup: Setup) -> Result<()> {
             base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([7; 32])
         },
         reality_short_id: "0123456789abcdef".into(),
+        vless: None,
     };
-    config::validate(&c, &secrets)?;
+    config::validate_preview(&c, &secrets)?;
     println!("{}", toml::to_string_pretty(&c)?);
     if !setup.execute {
         println!(

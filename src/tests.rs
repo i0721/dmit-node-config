@@ -9,13 +9,18 @@ use std::{collections::BTreeMap, fs};
 
 fn fixture() -> (Config, Secrets) {
     (
-        toml::from_str(config::EXAMPLE).unwrap(),
+        {
+            let mut c: Config = toml::from_str(config::EXAMPLE).unwrap();
+            c.vless = None;
+            c
+        },
         Secrets {
             xhttp_uuid: "10a6cfe1-d381-4c46-865e-998b28b801a1".into(),
             ws_uuid: "20a6cfe1-d381-4c46-865e-998b28b801a2".into(),
             reality_uuid: "30a6cfe1-d381-4c46-865e-998b28b801a3".into(),
             reality_private_key: URL_SAFE_NO_PAD.encode([7; 32]),
             reality_short_id: "0123456789abcdef".into(),
+            vless: None,
         },
     )
 }
@@ -49,10 +54,22 @@ fn legacy_snapshot_requires_complete_regeneration_and_known_generator() {
     let (_tmp, store) = sandbox();
     let id = store.render().unwrap();
     let mut path = store.release(&id).unwrap();
-    for (version, expected) in [("0.1.0", true), ("99.0.0", false)] {
+    let (c, s) = store.inputs().unwrap();
+    let legacy = crate::render_legacy::files(&c, &s).unwrap();
+    for (name, data) in &legacy {
+        store::atomic_write(&path.join(name), data).unwrap();
+    }
+    for (version, expected) in [("0.1.0", true), ("0.2.0", true), ("99.0.0", false)] {
         let mut manifest: Value =
             serde_json::from_slice(&fs::read(path.join("manifest.json")).unwrap()).unwrap();
         manifest["generator_version"] = json!(version);
+        manifest["template_version"] = json!("1");
+        manifest["files"] = json!(
+            legacy
+                .iter()
+                .map(|(name, data)| (name, store::digest(data)))
+                .collect::<BTreeMap<_, _>>()
+        );
         let bytes = serde_json::to_vec_pretty(&manifest).unwrap();
         let next = store::digest(&bytes)[..32].to_owned();
         store::atomic_write(&path.join("manifest.json"), &bytes).unwrap();
@@ -63,6 +80,41 @@ fn legacy_snapshot_requires_complete_regeneration_and_known_generator() {
     }
 }
 
+#[test]
+fn certificate_operations_do_not_require_or_generate_encryption_keys() {
+    let c: Config = toml::from_str(config::EXAMPLE).unwrap();
+    assert!(c.encrypted());
+    let operations = render::operations(&c);
+    assert_eq!(
+        operations["certificates"]["domain"]["sans"],
+        json!(["files.example.com", "speedtest.example.com"])
+    );
+    assert_eq!(operations["certificates"]["ip"]["sans"], json!(c.ips()));
+    assert!(
+        !serde_json::to_string(&operations)
+            .unwrap()
+            .contains("decryption")
+    );
+}
+
+#[test]
+fn template_two_explicit_versions_preserve_strict_snapshot_integrity() {
+    for (version, accepted) in [("0.3.0", true), ("0.3.1", true), ("0.3.2", false)] {
+        let (_tmp, store) = sandbox();
+        let id = store.render().unwrap();
+        let path = store.release(&id).unwrap();
+        let mut manifest: Value =
+            serde_json::from_slice(&fs::read(path.join("manifest.json")).unwrap()).unwrap();
+        manifest["generator_version"] = json!(version);
+        let bytes = serde_json::to_vec_pretty(&manifest).unwrap();
+        let next = store::digest(&bytes)[..32].to_owned();
+        store::atomic_write(&path.join("manifest.json"), &bytes).unwrap();
+        fs::rename(&path, store.release(&next).unwrap()).unwrap();
+        assert_eq!(store.verify(&next).is_ok(), accepted);
+        store::atomic_write(&store.release(&next).unwrap().join("xray.json"), b"{}").unwrap();
+        assert!(store.verify(&next).is_err());
+    }
+}
 #[test]
 fn rejects_unknown_fields_at_every_level() {
     let (c, s) = fixture();
@@ -234,6 +286,114 @@ fn client_credentials_and_alpn_are_correct() {
     let weights = c.clients.fingerprint_weights.values().sum::<u32>();
     assert_eq!(weights, 11);
     assert_eq!(clients["profiles"].as_array().unwrap().len(), 6);
+}
+
+#[test]
+fn encrypted_profiles_share_only_client_parameters_and_preserve_udp443() {
+    let (mut c, mut s) = fixture();
+    c.vless = Some(config::Vless { encryption: true });
+    let pair = |byte| config::EncryptionPair {
+        decryption: format!(
+            "mlkem768x25519plus.native.600s.{}",
+            URL_SAFE_NO_PAD.encode([byte; 64])
+        ),
+        encryption: format!(
+            "mlkem768x25519plus.native.0rtt.{}",
+            URL_SAFE_NO_PAD.encode([byte; 1184])
+        ),
+    };
+    s.vless = Some(config::EncryptionSecrets {
+        xhttp: pair(1),
+        ws: pair(2),
+        reality: pair(3),
+    });
+    config::validate(&c, &s).unwrap();
+    let server = render::xray(&c, &s);
+    for inbound in server["inbounds"].as_array().unwrap() {
+        assert_eq!(
+            inbound["settings"]["clients"][0]["flow"],
+            "xtls-rprx-vision"
+        );
+        assert_ne!(inbound["settings"]["decryption"], "none");
+    }
+    let mihomo: Value = serde_json::from_slice(&render::mihomo(&c, &s).unwrap()).unwrap();
+    let text = mihomo.to_string();
+    for kind in ["xhttp", "ws", "reality"] {
+        assert!(!text.contains(&s.vless.as_ref().unwrap().pair(kind).decryption));
+        let xray = render::outbound(&c, &s, kind, "chrome").unwrap();
+        assert_eq!(
+            xray["settings"]["vnext"][0]["users"][0]["flow"],
+            "xtls-rprx-vision-udp443"
+        );
+    }
+    for proxy in mihomo["proxies"].as_array().unwrap() {
+        assert_eq!(proxy["udp"], true);
+        assert_eq!(proxy["packet-encoding"], "xudp");
+        assert_eq!(proxy["flow"], "xtls-rprx-vision");
+        assert_eq!(proxy["skip-cert-verify"], false);
+        assert_eq!(
+            proxy["alpn"],
+            if proxy["network"] == "ws" {
+                json!(["http/1.1"])
+            } else {
+                json!(["h2", "http/1.1"])
+            }
+        );
+    }
+    s.vless = None;
+    assert!(config::validate(&c, &s).is_err());
+    assert!(config::validate_preview(&c, &s).is_ok());
+}
+
+#[test]
+#[ignore = "Requires locked XRAY_TEST_BINARY and MIHOMO_TEST_BINARY"]
+fn upstream_encrypted_xray_and_mihomo_configs_are_valid() {
+    let binary = std::env::var("XRAY_TEST_BINARY").unwrap();
+    let mihomo = std::env::var("MIHOMO_TEST_BINARY").unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let (mut c, mut s) = fixture();
+    c.vless = Some(config::Vless { encryption: true });
+    c.runtime.xray_binary = binary.clone();
+    c.runtime.log_root = tmp.path().to_str().unwrap().into();
+    fs::create_dir(tmp.path().join("xray")).unwrap();
+    config::encryption_keys(&c, &mut s).unwrap();
+    let first = serde_json::to_vec(&s).unwrap();
+    config::encryption_keys(&c, &mut s).unwrap();
+    assert_eq!(first, serde_json::to_vec(&s).unwrap());
+    let file = tmp.path().join("config.json");
+    store::atomic_write(&file, &serde_json::to_vec(&render::xray(&c, &s)).unwrap()).unwrap();
+    crate::host::command(
+        &binary,
+        &["run", "-test", "-config", file.to_str().unwrap()],
+    )
+    .unwrap();
+    for p in render::profiles(&c, &s).unwrap()["profiles"]
+        .as_array()
+        .unwrap()
+    {
+        store::atomic_write(
+            &file,
+            &serde_json::to_vec(&json!({"outbounds":[p["outbound"]]})).unwrap(),
+        )
+        .unwrap();
+        crate::host::command(
+            &binary,
+            &["run", "-test", "-config", file.to_str().unwrap()],
+        )
+        .unwrap();
+    }
+    store::atomic_write(&file, &render::mihomo(&c, &s).unwrap()).unwrap();
+    crate::host::command(
+        &mihomo,
+        &[
+            "-t",
+            "-d",
+            tmp.path().to_str().unwrap(),
+            "-f",
+            file.to_str().unwrap(),
+        ],
+    )
+    .unwrap();
 }
 
 #[test]

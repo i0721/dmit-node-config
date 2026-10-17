@@ -12,19 +12,22 @@ use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
     fs,
-    io::{self, Write},
+    io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
 };
 
 #[derive(Args)]
 pub struct Deploy {
+    /// Collect inputs once, review and confirm in the same terminal.
+    #[arg(long, conflicts_with_all = ["non_interactive", "execute", "approve"])]
+    pub wizard: bool,
     /// Optional complete node.toml candidate; existing secrets are always retained.
     #[arg(long)]
     pub input: Option<PathBuf>,
     /// Root domain for new DMIT names (for example example.com).
     #[arg(long)]
     pub domain_suffix: Option<String>,
-    #[arg(long, default_value = "dmit-")]
+    #[arg(long, default_value = "")]
     pub subdomain_prefix: String,
     #[arg(long)]
     pub domain: Option<String>,
@@ -32,6 +35,12 @@ pub struct Deploy {
     pub reality_domain: Option<String>,
     #[arg(long, value_delimiter = ',')]
     pub aliases: Option<Vec<String>>,
+    /// Explicitly retire old names instead of retaining compatibility aliases.
+    #[arg(long)]
+    pub replace_domain_set: bool,
+    /// Explicit encryption migration; existing configurations are never silently changed.
+    #[arg(long, action=clap::ArgAction::Set)]
+    pub vless_encryption: Option<bool>,
     #[arg(long)]
     pub ipv4: Option<String>,
     /// Empty string explicitly disables IPv6.
@@ -88,6 +97,7 @@ pub(crate) fn preview_secrets() -> Secrets {
         reality_uuid: "30a6cfe1-d381-4c46-865e-998b28b801a3".into(),
         reality_private_key: "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc".into(),
         reality_short_id: "0123456789abcdef".into(),
+        vless: None,
     }
 }
 fn prompt(label: &str, default: &str) -> Result<String> {
@@ -218,19 +228,41 @@ pub(crate) fn candidate(store: &Store, args: &Deploy) -> Result<(Config, Secrets
         };
         if !suffix.is_empty() {
             ensure!(config::domain(&suffix), "Invalid root domain");
-            c.node.domain = format!("{}qwq1.{suffix}", args.subdomain_prefix);
-            c.node.reality_domain = format!("{}reality.{suffix}", args.subdomain_prefix);
-            c.node.aliases = vec![format!("{}www.{suffix}", args.subdomain_prefix)];
+            let prefix = if args.wizard {
+                prompt(
+                    "Subdomain prefix (empty uses speedtest/files)",
+                    &args.subdomain_prefix,
+                )?
+            } else {
+                args.subdomain_prefix.clone()
+            };
+            c.node.domain = format!("{prefix}speedtest.{suffix}");
+            c.node.reality_domain = format!("{prefix}files.{suffix}");
+            c.node.aliases = vec![];
         }
         c.node.ipv4 = if args.ipv4.is_some() {
             String::new()
         } else {
-            detected_ip(false)?
+            match detected_ip(false) {
+                Ok(ip) => ip,
+                Err(error) if args.wizard => {
+                    println!("IPv4 requires explicit selection: {error}");
+                    String::new()
+                }
+                Err(error) => return Err(error),
+            }
         };
         c.node.ipv6 = if args.ipv6.is_some() {
             String::new()
         } else {
-            detected_ip(true)?
+            match detected_ip(true) {
+                Ok(ip) => ip,
+                Err(error) if args.wizard => {
+                    println!("IPv6 requires explicit selection: {error}");
+                    String::new()
+                }
+                Err(error) => return Err(error),
+            }
         };
         // Optional WARP defaults to the repository baseline, not a simplified profile.
     }
@@ -244,8 +276,14 @@ pub(crate) fn candidate(store: &Store, args: &Deploy) -> Result<(Config, Secrets
     set!(c.node.domain, args.domain);
     set!(c.node.reality_domain, args.reality_domain);
     set!(c.node.aliases, args.aliases);
+    if args.replace_domain_set && args.aliases.is_none() {
+        c.node.aliases.clear();
+    }
     set!(c.node.ipv4, args.ipv4);
     set!(c.node.ipv6, args.ipv6);
+    if let Some(encryption) = args.vless_encryption {
+        c.vless = Some(config::Vless { encryption });
+    }
     if let Some(v) = args.http_port {
         c.ports.http = v;
     }
@@ -283,11 +321,14 @@ pub(crate) fn candidate(store: &Store, args: &Deploy) -> Result<(Config, Secrets
         c.warp.enabled =
             prompt("Independent WARP (true/false)", &c.warp.enabled.to_string())?.parse()?;
     }
-    config::validate(&c, &s)?;
+    config::validate_preview(&c, &s)?;
     if exists {
         let (old, _) = store.inputs()?;
         // Preserve old TLS and REALITY names when changing the primary domain.
-        for domain in [&old.node.domain, &old.node.reality_domain] {
+        for domain in [&old.node.domain, &old.node.reality_domain]
+            .into_iter()
+            .filter(|_| !args.replace_domain_set)
+        {
             if domain != &c.node.domain
                 && domain != &c.node.reality_domain
                 && !c.node.aliases.contains(domain)
@@ -295,7 +336,7 @@ pub(crate) fn candidate(store: &Store, args: &Deploy) -> Result<(Config, Secrets
                 c.node.aliases.push(domain.clone());
             }
         }
-        config::validate(&c, &s)?;
+        config::validate_preview(&c, &s)?;
         ensure!(
             old.runtime.xray_binary == c.runtime.xray_binary
                 && old.runtime.nginx_binary == c.runtime.nginx_binary
@@ -306,7 +347,8 @@ pub(crate) fn candidate(store: &Store, args: &Deploy) -> Result<(Config, Secrets
     Ok((c, s, exists))
 }
 fn preserves_clients(old: &Config, old_s: &Secrets, new: &Config, new_s: &Secrets) -> Result<bool> {
-    Ok(old.ports.https == new.ports.https
+    Ok(old.encrypted() == new.encrypted()
+        && old.ports.https == new.ports.https
         && old.ports.reality == new.ports.reality
         && old.transport.xhttp.path == new.transport.xhttp.path
         && old.transport.ws.path == new.transport.ws.path
@@ -369,7 +411,19 @@ fn backup_paths(store: &Store, c: &Config) -> Vec<PathBuf> {
         PathBuf::from("/usr/sbin/policy-rc.d"),
         PathBuf::from("/usr/local/go"),
         PathBuf::from("/var/spool/cron/crontabs/root"),
+        Path::new(&c.website.root).join("index.html"),
     ];
+    paths.sort();
+    paths.dedup();
+    paths
+}
+fn completed_paths(store: &Store, c: &Config) -> Vec<PathBuf> {
+    let mut paths = backup_paths(store, c);
+    paths.extend(
+        host::ENTRIES
+            .into_iter()
+            .map(|(path, _)| PathBuf::from(path)),
+    );
     paths.sort();
     paths.dedup();
     paths
@@ -481,12 +535,35 @@ struct Journal {
     phase: String,
     config_existed: bool,
     services: BTreeMap<String, host::Service>,
+    #[serde(default)]
+    after_files: Option<BTreeMap<PathBuf, Value>>,
+    #[serde(default)]
+    completed_release: Option<String>,
 }
 fn save(store: &Store, journal: &Journal) -> Result<()> {
     store::atomic_write(
         &store.state_dir.join("deployment.json"),
         &serde_json::to_vec_pretty(journal)?,
     )
+}
+fn recovery_paths(store: &Store, journal: &Journal) -> Result<Vec<PathBuf>> {
+    let mut paths = backup_paths(store, &journal.config);
+    match journal.schema_version {
+        1 => {
+            ensure!(
+                journal.config.vless.is_none()
+                    && journal.after_files.is_none()
+                    && journal.completed_release.is_none(),
+                "Legacy journal contains newer material fields"
+            );
+            // 0.2 did not modify or back up the website. Preserve the exact
+            // original backup list; all recorded digests remain mandatory.
+            paths.retain(|p| p != &Path::new(&journal.config.website.root).join("index.html"));
+        }
+        2 => {}
+        _ => bail!("Unknown deployment recovery format"),
+    }
+    Ok(paths)
 }
 fn copy_tree(source: &Path, dest: &Path) -> Result<()> {
     let metadata = fs::symlink_metadata(source)?;
@@ -544,16 +621,24 @@ fn initialize(store: &Store, c: &Config, explicit_input: bool, work: &Path) -> R
 }
 
 pub fn run(store: &Store, mut args: Deploy) -> Result<()> {
+    if args.wizard {
+        ensure!(
+            io::stdin().is_terminal(),
+            "Wizard requires a terminal; use explicit non-interactive preview and approval instead"
+        );
+        host::linux_root()?;
+    }
     ensure!(
         !store.state_dir.join("deployment.json").exists(),
         "Interrupted provisioning exists; run recover first"
     );
-    let (c, s, exists) = candidate(store, &args)?;
+    let (c, mut s, exists) = candidate(store, &args)?;
     ensure!(
         config::abs_path(store.config_dir.to_str().context("Config path")?)
             && config::abs_path(store.state_dir.to_str().context("State path")?),
         "Automatic deployment requires safe absolute Linux config/state paths"
     );
+    let mut wizard_token = None;
     let inherited = if exists {
         Some(store.inputs()?.0)
     } else {
@@ -562,7 +647,7 @@ pub fn run(store: &Store, mut args: Deploy) -> Result<()> {
     if !args.non_interactive {
         let mode = prompt(
             "DNS mode (manual/cloudflare)",
-            if args.dns_zone.is_some() {
+            if args.dns_zone.is_some() || args.wizard {
                 "cloudflare"
             } else {
                 "manual"
@@ -573,10 +658,28 @@ pub fn run(store: &Store, mut args: Deploy) -> Result<()> {
             "Unknown DNS mode"
         );
         if mode == "cloudflare" {
-            args.dns_zone = Some(prompt(
+            let zone = prompt(
                 "Cloudflare Zone ID",
-                args.dns_zone.as_deref().unwrap_or(""),
-            )?);
+                args.dns_zone
+                    .as_deref()
+                    .unwrap_or(if args.wizard { "auto" } else { "" }),
+            )?;
+            if args.wizard {
+                let cached = store.config_dir.join("credentials/cloudflare-token");
+                let token = dns::token(
+                    args.token_file
+                        .as_deref()
+                        .or_else(|| cached.is_file().then_some(cached.as_path())),
+                )?;
+                args.dns_zone = Some(if zone == "auto" {
+                    Cloudflare::discover_zone(&c.node.domain, &token)?
+                } else {
+                    zone
+                });
+                wizard_token = Some(token);
+            } else {
+                args.dns_zone = Some(zone);
+            }
         } else {
             args.dns_zone = None;
         }
@@ -593,6 +696,24 @@ pub fn run(store: &Store, mut args: Deploy) -> Result<()> {
                 "ACME email",
                 args.acme_email.as_deref().unwrap_or(""),
             )?);
+            if args.wizard {
+                args.accept_ca_terms = prompt("Accept Let's Encrypt subscriber agreement https://letsencrypt.org/repository/ (true/false)", "false")?.parse()?;
+            }
+        }
+        if args.wizard && c.warp.enabled && !Path::new(&c.warp.config_file).exists() {
+            args.accept_warp_terms = prompt("Accept Cloudflare WARP terms https://www.cloudflare.com/application/terms/ (true/false)", "false")?.parse()?;
+        }
+        if args.wizard
+            && store.pointer("current")?.is_none()
+            && host::ENTRIES
+                .iter()
+                .any(|(p, _)| fs::symlink_metadata(p).is_ok())
+        {
+            args.takeover = prompt(
+                "Back up and take over existing service entrypoints (true/false)",
+                &args.takeover.to_string(),
+            )?
+            .parse()?;
         }
     }
     let paths = backup_paths(store, &c);
@@ -607,7 +728,10 @@ pub fn run(store: &Store, mut args: Deploy) -> Result<()> {
     let cf = if let Some(zone) = &args.dns_zone {
         Some(Cloudflare::new(
             zone,
-            dns::token(args.token_file.as_deref())?,
+            match wizard_token {
+                Some(token) => token,
+                None => dns::token(args.token_file.as_deref())?,
+            },
         )?)
     } else {
         None
@@ -617,6 +741,24 @@ pub fn run(store: &Store, mut args: Deploy) -> Result<()> {
         .map(|cf| cf.plan(&c, inherited.as_ref()))
         .transpose()?
         .unwrap_or_default();
+    if args.wizard
+        && !args.manual_certificates
+        && let Some(cf) = &cf
+    {
+        let zone = cf.zone_name()?;
+        if c.domains()
+            .iter()
+            .any(|name| name != &zone && !name.ends_with(&format!(".{zone}")))
+        {
+            for name in c.domains() {
+                Cloudflare::discover_zone(&name, cf.credential())?;
+            }
+            args.acme_discover_zones = true;
+            println!(
+                "Retained SANs span multiple zones; authorized ACME zone discovery is included in the plan."
+            );
+        }
+    }
     let inventory = inventory(store, &c)?;
     let previous = store.pointer("current")?;
     let active_config = previous
@@ -679,12 +821,42 @@ pub fn run(store: &Store, mut args: Deploy) -> Result<()> {
     } else {
         "New DMIT configuration; credentials generated on execution".into()
     };
-    let plan = json!({"schema_version":1,"configuration_diff":configuration_diff,"required_actions":required_actions,"certificate_status":{"domain_valid":domain_cert_valid,"ip_valid":ip_cert_valid},"configuration":c,"preserve_existing_secrets":exists,"generate_transport_paths":!exists && args.input.is_none(),"previous_client_compatibility":if previous.is_none(){"no_previous_managed_release"}else if preserve_clients{"preserved_and_live_test_required"}else{"explicit_input_changes_require_client_updates"},"secret_digest":if exists{Some(store::digest(&serde_json::to_vec(&s)?))}else{None},"inventory":inventory,"dns_changes":changes,"manual_dns":cf.is_none(),"manual_certificates":args.manual_certificates,"provision_dependencies":!args.skip_dependencies,"takeover":args.takeover,"new_package_defaults_may_be_claimed":entrypoints_absent && !args.skip_dependencies,"probe_url":args.probe_url,"dns_wait_seconds":args.dns_wait_seconds,"acme_email":args.acme_email,"acme_discover_zones":args.acme_discover_zones,"retire_superseded_acme_renewal":if args.manual_certificates{None}else{superseded_acme.as_deref()},"accept_ca_terms":args.accept_ca_terms,"accept_warp_terms":args.accept_warp_terms,"generator":env!("CARGO_PKG_VERSION"),"executable_sha256":store::file_digest(&std::env::current_exe()?)?,"versions_lock_sha256":store::digest(include_bytes!("../versions.lock.toml")),"stages":["backup","dependencies","inputs","dns","certificates","warp","warp-socks-handshake-with-temporary-tun-stop","render","diff","check","takeover-if-authorized","apply-with-live-handshakes","renewal"],"recovery_limits":["Package transactions and CA issuance cannot be undone by a configuration rollback; backups and DNS recovery are retained","Unknown unmanaged service credentials are never inferred: import verified node.toml/secrets.json before takeover"]});
+    let mut plan = json!({"schema_version":1,"configuration_diff":configuration_diff,"required_actions":required_actions,"certificate_status":{"domain_valid":domain_cert_valid,"ip_valid":ip_cert_valid},"configuration":c,"preserve_existing_secrets":exists,"generate_transport_paths":!exists && args.input.is_none(),"previous_client_compatibility":if previous.is_none(){"no_previous_managed_release"}else if preserve_clients{"preserved_and_live_test_required"}else{"explicit_input_changes_require_client_updates"},"secret_digest":if exists{Some(store::digest(&serde_json::to_vec(&s)?))}else{None},"inventory":inventory,"dns_changes":changes,"manual_dns":cf.is_none(),"manual_certificates":args.manual_certificates,"provision_dependencies":!args.skip_dependencies,"takeover":args.takeover,"new_package_defaults_may_be_claimed":entrypoints_absent && !args.skip_dependencies,"probe_url":args.probe_url,"dns_wait_seconds":args.dns_wait_seconds,"acme_email":args.acme_email,"acme_discover_zones":args.acme_discover_zones,"retire_superseded_acme_renewal":if args.manual_certificates{None}else{superseded_acme.as_deref()},"accept_ca_terms":args.accept_ca_terms,"accept_warp_terms":args.accept_warp_terms,"generator":env!("CARGO_PKG_VERSION"),"executable_sha256":store::file_digest(&std::env::current_exe()?)?,"versions_lock_sha256":store::digest(include_bytes!("../versions.lock.toml")),"stages":["backup","dependencies","inputs","dns","certificates","warp","warp-socks-handshake-with-temporary-tun-stop","render","diff","check","takeover-if-authorized","apply-with-live-handshakes","renewal"],"recovery_limits":["Package transactions and CA issuance cannot be undone by a configuration rollback; backups and DNS recovery are retained","Unknown unmanaged service credentials are never inferred: import verified node.toml/secrets.json before takeover"]});
+    plan["website_placeholder_replacement"] = json!(provision::website_change(&c)?);
+    plan["generate_independent_vless_keys"] = json!(c.encrypted() && s.vless.is_none());
+    plan["replace_domain_set"] = json!(args.replace_domain_set);
+    if args.wizard {
+        plan["export_client_formats"] = json!(["xray", "mihomo"]);
+        plan["persist_cloudflare_credential"] = json!(cf.is_some());
+        if cf.is_some() {
+            plan["credential_file"] = json!(store.config_dir.join("credentials/cloudflare-token"));
+            plan["stages"]
+                .as_array_mut()
+                .unwrap()
+                .insert(3, json!("private-credential-storage"));
+        }
+        plan["stages"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!("private-client-export"));
+    }
     let digest = store::digest(&serde_json::to_vec(&plan)?);
     println!(
         "{}\nPlan SHA256: {digest}",
         serde_json::to_string_pretty(&plan)?
     );
+    if args.wizard {
+        ensure!(
+            required_actions.is_empty(),
+            "Plan has unmet prerequisites; resolve required_actions before deployment"
+        );
+        ensure!(
+            prompt("Apply this exact plan? Type yes to continue", "no")? == "yes",
+            "Deployment cancelled; no deployment changes made"
+        );
+        args.execute = true;
+        args.approve = Some(digest.clone());
+    }
     if !args.execute {
         println!(
             "Preview only. Review this plan; rerun with the same options --execute --approve {digest}"
@@ -702,6 +874,10 @@ pub fn run(store: &Store, mut args: Deploy) -> Result<()> {
     host::linux_root()?;
     let _lock = store.lock()?;
     let _lease = provision::Lease::hold(&_lock);
+    ensure!(
+        plan["executable_sha256"] == json!(store::file_digest(&std::env::current_exe()?)?),
+        "nodectl changed after preview; review a fresh plan"
+    );
     ensure!(
         inventory == self::inventory(store, &c)?,
         "Host changed while acquiring lock; preview again"
@@ -735,7 +911,7 @@ pub fn run(store: &Store, mut args: Deploy) -> Result<()> {
         probe_url: args.probe_url.clone(),
     };
     let mut journal = Journal {
-        schema_version: 1,
+        schema_version: 2,
         backup: backup.clone(),
         config: c.clone(),
         previous: store.pointer("current")?,
@@ -752,6 +928,8 @@ pub fn run(store: &Store, mut args: Deploy) -> Result<()> {
             .into_iter()
             .map(|name| Ok((name.to_owned(), host::service_state(name)?)))
             .collect::<Result<_>>()?,
+        after_files: None,
+        completed_release: None,
     };
     for (i, path) in backup_paths(store, &c).into_iter().enumerate() {
         let copy = backup.join(format!("file-{i}"));
@@ -794,13 +972,30 @@ pub fn run(store: &Store, mut args: Deploy) -> Result<()> {
             created_nginx_default = provision?;
         }
         if exists {
+            config::encryption_keys(&c, &mut s)?;
+            config::validate(&c, &s)?;
             store::atomic_write(
                 &store.config_dir.join("node.toml"),
                 toml::to_string_pretty(&c)?.as_bytes(),
             )?;
+            store::atomic_write(
+                &store.config_dir.join("secrets.json"),
+                &serde_json::to_vec_pretty(&s)?,
+            )?;
         } else {
             initialize(store, &c, args.input.is_some(), &backup)?;
         }
+        if args.wizard
+            && let Some(cf) = &cf
+        {
+            let credentials = store.config_dir.join("credentials");
+            store::private_dir(&credentials)?;
+            store::atomic_write(
+                &credentials.join("cloudflare-token"),
+                cf.credential().as_bytes(),
+            )?;
+        }
+        provision::website(&c)?;
         for change in &changes {
             cf.as_ref()
                 .context("Cloudflare client")?
@@ -831,6 +1026,10 @@ pub fn run(store: &Store, mut args: Deploy) -> Result<()> {
             token.as_deref(),
             superseded_acme.as_deref(),
         )?;
+        #[cfg(feature = "integration-test")]
+        if std::env::var("NODECTL_DEPLOY_FAILPOINT").as_deref() == Ok("certificate-material") {
+            bail!("Injected deployment certificate material interruption");
+        }
         provision::warp(&c, &args)?;
         journal.phase = "warp-probe".into();
         save(store, &journal)?;
@@ -884,11 +1083,36 @@ pub fn run(store: &Store, mut args: Deploy) -> Result<()> {
                 && journal.routes6 == host::default_routes(true)?,
             "DMIT default routes changed"
         );
+        if args.wizard {
+            let output = store
+                .state_dir
+                .join("client-exports")
+                .join(uuid::Uuid::new_v4().to_string());
+            store::private_dir(output.parent().unwrap())?;
+            store.export_format(&output, store::ClientFormat::All)?;
+            println!(
+                "Private Xray/Mihomo clients and weights: {}",
+                output.display()
+            );
+        }
         store::atomic_write(
             &backup.join("completed.json"),
             &serde_json::to_vec_pretty(
                 &json!({"release":release,"plan_sha256":digest,"dns":journal.dns,"routes_preserved":true}),
             )?,
+        )?;
+        let records = store.state_dir.join("deployments");
+        store::private_dir(&records)?;
+        journal.completed_release = Some(release.clone());
+        journal.after_files = Some(
+            completed_paths(store, &c)
+                .into_iter()
+                .map(|p| Ok((p.clone(), fingerprint(&p)?)))
+                .collect::<Result<_>>()?,
+        );
+        store::atomic_write(
+            &records.join(format!("{release}.json")),
+            &serde_json::to_vec_pretty(&journal)?,
         )?;
         fs::remove_file(store.state_dir.join("deployment.json"))?;
         println!(
@@ -913,14 +1137,13 @@ pub fn run(store: &Store, mut args: Deploy) -> Result<()> {
 }
 fn restore(store: &Store, journal: &Journal, cf: Option<&Cloudflare>) -> Result<()> {
     ensure!(
-        journal.schema_version == 1
-            && journal
-                .backup
-                .starts_with(store.state_dir.join("deployment-backups")),
+        journal
+            .backup
+            .starts_with(store.state_dir.join("deployment-backups")),
         "Invalid deployment recovery record"
     );
-    let allowed = backup_paths(store, &journal.config);
-    config::validate(&journal.config, &preview_secrets())?;
+    let allowed = recovery_paths(store, journal)?;
+    config::validate_preview(&journal.config, &preview_secrets())?;
     for path in &allowed {
         ensure!(
             path.is_absolute()
@@ -1103,7 +1326,7 @@ fn restore(store: &Store, journal: &Journal, cf: Option<&Cloudflare>) -> Result<
     fs::remove_file(store.state_dir.join("deployment.json"))?;
     Ok(())
 }
-pub fn recover(store: &Store) -> Result<()> {
+pub fn recover(store: &Store, token_file: Option<&Path>) -> Result<()> {
     host::linux_root()?;
     let path = store.state_dir.join("deployment.json");
     store::check_private(&path, false)?;
@@ -1112,12 +1335,66 @@ pub fn recover(store: &Store) -> Result<()> {
     let cf = if journal.pending_dns.is_some() || !journal.dns.is_empty() {
         Some(Cloudflare::new(
             journal.dns_zone.as_deref().context("Recovery DNS zone")?,
-            dns::token(None)?,
+            dns::token(token_file)?,
         )?)
     } else {
         None
     };
     restore(store, &journal, cf.as_ref())
+}
+
+/// Roll back the entire automatic deployment, including certificate and DNS
+/// material. Ordinary manual releases retain their existing apply rollback.
+pub fn rollback(store: &Store, token_file: Option<&Path>) -> Result<bool> {
+    host::linux_root()?;
+    let current = store.pointer("current")?.context("No current release")?;
+    let path = store
+        .state_dir
+        .join("deployments")
+        .join(format!("{current}.json"));
+    if !path.exists() {
+        return Ok(false);
+    }
+    store.verify(&current)?;
+    store::check_private(&path, false)?;
+    let journal: Journal = serde_json::from_slice(&fs::read(&path)?)
+        .map_err(|_| anyhow::anyhow!("Invalid completed deployment record"))?;
+    ensure!(
+        journal.schema_version == 2
+            && journal.completed_release.as_deref() == Some(current.as_str()),
+        "Completed deployment record belongs to another release"
+    );
+    ensure!(
+        journal.previous.is_some() && journal.previous == store.pointer("previous")?,
+        "Deployment rollback baseline differs; inspect history before proceeding"
+    );
+    let after = journal
+        .after_files
+        .as_ref()
+        .context("Completed deployment has no material baseline")?;
+    ensure!(
+        after.len() == completed_paths(store, &journal.config).len(),
+        "Incomplete completed material baseline"
+    );
+    for path in completed_paths(store, &journal.config) {
+        ensure!(
+            after.get(&path) == Some(&fingerprint(&path)?),
+            "Deployment materials changed after completion; inspect drift before rollback"
+        );
+    }
+    // Acquire the credential before persisting an interruption record.
+    let cf = if journal.pending_dns.is_some() || !journal.dns.is_empty() {
+        Some(Cloudflare::new(
+            journal.dns_zone.as_deref().context("Recovery zone")?,
+            dns::token(token_file)?,
+        )?)
+    } else {
+        None
+    };
+    save(store, &journal)?;
+    restore(store, &journal, cf.as_ref())?;
+    println!("Deployment materials, previous release and DNS restored and verified.");
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -1140,7 +1417,12 @@ mod tests {
         store::private_dir(&store.config_dir).unwrap();
         store::atomic_write(
             &store.config_dir.join("node.toml"),
-            config::EXAMPLE.as_bytes(),
+            {
+                let mut c: Config = toml::from_str(config::EXAMPLE).unwrap();
+                c.vless = None;
+                toml::to_string_pretty(&c).unwrap()
+            }
+            .as_bytes(),
         )
         .unwrap();
         store::atomic_write(
@@ -1176,7 +1458,7 @@ mod tests {
         assert_eq!(s.reality_private_key, before.1.reality_private_key);
         assert_eq!(
             fs::read_to_string(store.config_dir.join("node.toml")).unwrap(),
-            config::EXAMPLE
+            toml::to_string_pretty(&before.0).unwrap()
         );
     }
     #[test]
@@ -1198,9 +1480,10 @@ mod tests {
         )
         .unwrap();
         assert!(!exists);
-        assert_eq!(c.node.domain, "test-qwq1.example.com");
-        assert_eq!(c.node.reality_domain, "test-reality.example.com");
-        assert_eq!(c.node.aliases, vec!["test-www.example.com"]);
+        assert_eq!(c.node.domain, "test-speedtest.example.com");
+        assert_eq!(c.node.reality_domain, "test-files.example.com");
+        assert!(c.node.aliases.is_empty());
+        assert!(c.encrypted());
         assert_eq!(
             (
                 c.clients.xhttp_weight,
@@ -1251,12 +1534,65 @@ mod tests {
         assert!(!preserves_clients(&old, &secrets, &changed, &s).unwrap());
     }
     #[test]
+    fn explicit_replacement_removes_legacy_names_without_rotating_identity() {
+        let (_tmp, store) = existing();
+        let (old, secrets) = store.inputs().unwrap();
+        let original = fs::read(store.config_dir.join("node.toml")).unwrap();
+        let (c, s, _) = candidate(
+            &store,
+            &args(&[
+                "--domain",
+                "speedtest.example.net",
+                "--reality-domain",
+                "files.example.net",
+                "--replace-domain-set",
+                "--vless-encryption",
+                "true",
+            ]),
+        )
+        .unwrap();
+        assert_eq!(
+            c.domains(),
+            vec!["files.example.net", "speedtest.example.net"]
+        );
+        assert!(c.node.aliases.is_empty() && c.encrypted());
+        assert_eq!(
+            serde_json::to_value(&s).unwrap(),
+            serde_json::to_value(&secrets).unwrap()
+        );
+        assert_eq!(c.transport.xhttp.path, old.transport.xhttp.path);
+        assert!(!preserves_clients(&old, &secrets, &c, &s).unwrap());
+        assert_eq!(
+            fs::read(store.config_dir.join("node.toml")).unwrap(),
+            original
+        );
+    }
+    #[test]
     fn provisioning_journal_blocks_all_ordinary_mutations() {
         let (_tmp, store) = existing();
         store::private_dir(&store.state_dir).unwrap();
         store::atomic_write(&store.state_dir.join("deployment.json"), b"{}").unwrap();
         assert!(store.lock().is_err());
         assert!(store.recovery_lock().is_ok());
+    }
+    #[test]
+    fn legacy_provisioning_journal_keeps_its_original_backup_scope() {
+        let (_tmp, store) = existing();
+        let (c, _) = store.inputs().unwrap();
+        let mut journal: Journal = serde_json::from_value(json!({
+            "schema_version":1,"backup":"/var/lib/dmit-node/deployment-backups/fixture",
+            "config":c,"previous":null,"reference":{"binary":"/usr/local/bin/xray","sha256":"fixture","version":"26.10.10","probe_url":"https://example.com/"},
+            "files":[],"dns_zone":null,"dns":[],"pending_dns":null,"routes4":"","routes6":"","phase":"prepared","config_existed":true,"services":{}
+        })).unwrap();
+        let page = Path::new(&journal.config.website.root).join("index.html");
+        assert!(!recovery_paths(&store, &journal).unwrap().contains(&page));
+        journal.schema_version = 2;
+        assert!(recovery_paths(&store, &journal).unwrap().contains(&page));
+        journal.schema_version = 1;
+        journal.config.vless = Some(config::Vless { encryption: true });
+        assert!(recovery_paths(&store, &journal).is_err());
+        journal.schema_version = 999;
+        assert!(recovery_paths(&store, &journal).is_err());
     }
     #[test]
     fn backup_round_trip_keeps_private_modes_and_symlinks() {
@@ -1302,6 +1638,7 @@ mod tests {
         fs::set_permissions(&fake, fs::Permissions::from_mode(0o700)).unwrap();
         let mut c: Config = toml::from_str(config::EXAMPLE).unwrap();
         c.runtime.xray_binary = fake.to_str().unwrap().into();
+        c.vless = None;
         c.transport.xhttp.path = "/chosen/modules/stream/".into();
         initialize(&store, &c, true, tmp.path()).unwrap();
         let (actual, secrets) = store.inputs().unwrap();

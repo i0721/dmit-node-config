@@ -11,7 +11,14 @@ pub fn run(store: &Store, version: &str, prefix: &Path, execute: bool) -> Result
     let script = include_str!("../install.sh");
     let mut command = Command::new("/bin/sh");
     command
-        .args(["-s", "--", "--version", version, "--prefix"])
+        .args([
+            "-s",
+            "--",
+            "--install-only",
+            "--version",
+            version,
+            "--prefix",
+        ])
         .arg(prefix)
         .arg("--config-dir")
         .arg(&store.config_dir)
@@ -22,6 +29,22 @@ pub fn run(store: &Store, version: &str, prefix: &Path, execute: bool) -> Result
         .env("PATH", "/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
         .stdin(Stdio::piped());
     // The installer validates old inputs without switching services or snapshots.
+    for name in [
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "no_proxy",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "CURL_CA_BUNDLE",
+        "SSL_CERT_FILE",
+    ] {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
     let _lock = if execute { Some(store.lock()?) } else { None };
     let mut child = command
         .spawn()

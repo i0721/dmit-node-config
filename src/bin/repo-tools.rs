@@ -4,6 +4,8 @@ use regex::Regex;
 use serde_json::{Value, json};
 #[path = "../artifacts.rs"]
 mod artifacts;
+#[path = "../protocol_tools.rs"]
+mod protocol_tools;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -106,10 +108,9 @@ fn docs() -> Result<()> {
     let fence = Regex::new(r"(?s)```.*?```")?;
     let links = Regex::new(r"!?\[[^\]]*\]\((<?[^)\n]+>?)\)")?;
     let remote = Regex::new(r"^[A-Za-z][A-Za-z0-9+.-]*:")?;
-    let private = Regex::new(concat!(
-        "yushulinfeng",
-        r"\.com|rin721qwq@|179\.255\.137\.198|54b3415431cdb76e0bd76f130f733a27"
-    ))?;
+    // The audit must not itself publish an operator's private identifiers.
+    let private =
+        Regex::new(r"dash\.cloudflare\.com/[a-f0-9]{32}|(?i:[a-z]:[\\/](?:Users|coder)[\\/])")?;
     let mut errors = vec![];
     for name in files.split(|b| *b == 0).filter(|s| !s.is_empty()) {
         let name = std::str::from_utf8(name)?;
@@ -117,8 +118,8 @@ fn docs() -> Result<()> {
         if path.extension().is_none_or(|e| e != "md") || !path.is_file() {
             continue;
         }
-        let content = text(&path)?;
-        let content = fence.replace_all(&content, "");
+        let original = text(&path)?;
+        let content = fence.replace_all(&original, "");
         for c in links.captures_iter(&content) {
             let link = c[1].trim().trim_matches(['<', '>']);
             if remote.is_match(link) || link.starts_with("//") {
@@ -148,7 +149,7 @@ fn docs() -> Result<()> {
                 _ => errors.push(format!("{name}: missing target {link}")),
             }
         }
-        if private.is_match(&content) {
+        if private.is_match(&original) {
             errors.push(format!("{name}: real deployment identifier"));
         }
     }
@@ -317,10 +318,9 @@ fn smoke(binary: &Path, work: &Path) -> Result<()> {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&config, fs::Permissions::from_mode(0o700))?;
     }
-    fs::write(
-        config.join("node.toml"),
-        include_str!("../../config/node.example.toml"),
-    )?;
+    let mut legacy: toml::Value = toml::from_str(include_str!("../../config/node.example.toml"))?;
+    legacy.as_table_mut().unwrap().remove("vless");
+    fs::write(config.join("node.toml"), toml::to_string_pretty(&legacy)?)?;
     fs::write(
         config.join("secrets.json"),
         serde_json::to_vec(
@@ -387,6 +387,7 @@ fn run() -> Result<()> {
         "check-workflows" => workflows()?,
         "check-native" => native_audit()?,
         "download-xray" => artifacts::download_xray(Path::new(arg(&args, 1)?))?,
+        "download-mihomo" => artifacts::download_mihomo(Path::new(arg(&args, 1)?))?,
         "release-licenses" => licenses(Path::new(arg(&args, 1)?))?,
         "release-smoke" => {
             let binary = fs::canonicalize(arg(&args, 1)?)?;
@@ -413,6 +414,33 @@ fn run() -> Result<()> {
             println!("{ip}");
         }
         "probe" => probe()?,
+        "protocol-config" => protocol_tools::configs(
+            Path::new(arg(&args, 1)?),
+            arg(&args, 2)?,
+            arg(&args, 3)?,
+            arg(&args, 4)?,
+            Path::new(arg(&args, 5)?),
+            args.get(6).map(String::as_str),
+        )?,
+        "json-digest" => {
+            use sha2::{Digest, Sha256};
+            let value: Value = serde_json::from_slice(&fs::read(arg(&args, 1)?)?)?;
+            println!(
+                "{}",
+                hex::encode(Sha256::digest(serde_json::to_vec(&value)?))
+            );
+        }
+        "udp-echo" => protocol_tools::echo(arg(&args, 1)?, false)?,
+        "hello-relay" => protocol_tools::hello_relay(Path::new(arg(&args, 1)?))?,
+        "legacy-inputs-fixture" => protocol_tools::legacy_inputs(Path::new(arg(&args, 1)?))?,
+        "hello-check" => protocol_tools::hello_check(Path::new(arg(&args, 1)?), arg(&args, 2)?)?,
+        "udp-dns" => protocol_tools::echo(arg(&args, 1)?, true)?,
+        "udp-probe" => protocol_tools::udp(
+            arg(&args, 1)?.parse()?,
+            arg(&args, 2)?.parse()?,
+            arg(&args, 3)?.parse()?,
+            args.get(4).map(String::as_str).unwrap_or("echo"),
+        )?,
         _ => bail!("Unknown repository helper"),
     }
     Ok(())

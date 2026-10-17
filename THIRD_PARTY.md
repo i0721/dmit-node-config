@@ -29,3 +29,5 @@
 传递依赖由 Cargo.lock 固定，CI 的 cargo-deny 检查许可证和安全公告。当前解析出的许可证均为开源许可；不从私有 registry 或未声明的 Git 来源加载依赖。
 
 外部运行组件： [Xray Core](https://github.com/XTLS/Xray-core)（MPL-2.0）、[Nginx](https://github.com/nginx/nginx)（BSD-2-Clause）、[usque](https://github.com/Diniboy1123/usque)（MIT）、[acme.sh](https://github.com/acmesh-official/acme.sh)（GPL-3.0）。这些组件作为独立进程运行，并未重写或链接进 Rust 程序。
+
+验收客户端另使用 [Mihomo v1.19.32](https://github.com/MetaCubeX/mihomo/tree/v1.19.32)（GPL-3.0）；官方归档摘要固定在 versions.lock.toml。测试下载后作为独立进程执行，不安装到生产服务，也不打包进 nodectl 发行归档。

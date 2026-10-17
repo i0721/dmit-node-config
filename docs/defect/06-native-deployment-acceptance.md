@@ -1,5 +1,7 @@
 # Rust 原生化与 DMIT 自动部署验收记录
 
+本页为历史功能验收摘要，环境和恢复标识已脱敏；原始日志与完整记录私密保存，不作为可直接执行的生产指令。公开截图均为脱敏示例。
+
 日期：2026-10-17。实施范围与顺序见 [实施计划](04-native-deployment-plan.md)，安全发现见 [安全审查](05-native-deployment-security.md)。本报告区分本地验证与生产执行，不将功能实现等同于公网验收。
 
 ## 实施交付
@@ -33,7 +35,7 @@
 
 两项实现完成后开始集中验收。矩阵测试启动后补充的 ACME 缓存/共享账户保护由最终单测覆盖；最终 Rust 版本还在 Debian 12、Ubuntu 24.04 自动流程中重编译复验。手动证书夹具不验证公网 ACME 或 Cloudflare 写入。
 
-本地归档 SHA256：`27817f1a818db51966ac5a16e3efd783b57679a8858766b449c960b0da80d6fb`。暂存到 VPS 的普通 release 候选 SHA256：`b86e3d84b0651c88c63f5ee59ed9bb0b6013502b37a4dc07b2f4c7570c2208d4`。二者编译目标形式不同，归档内程序另经独立 smoke，不混用其摘要。
+本地归档 SHA256：`PRIVATE-ARCHIVE`。暂存到 VPS 的普通 release 候选 SHA256：`PRIVATE-ARCHIVE`。二者编译目标形式不同，归档内程序另经独立 smoke，不混用其摘要。
 
 ## 真实环境当前证据
 
@@ -46,7 +48,7 @@
 - 域名和 IP 的实际 ACME 缓存均核实 reloadcmd 指向正式 `/usr/local/bin/nodectl` 的带锁 renew-hook；Token 文件 root:0600。测试用 Windows/WSL 客户端凭据副本及临时 Token 副本已删除，目标 VPS 的私密配置、Token 和恢复备份保留。
 - 独立 Docker 客户端经过公网 IPv4 入口，新旧各三种协议全部成功，trace 出口为 DMIT 自有 IPv4/IPv6 且 warp=off；公网 H2=2、H3=3、IP TLS=200，证书验证开启。日志为 public-protocols-docker-final.log、public-web-final.log；主机细节与备份比较日志在私密 .local-deploy 目录。
 - 本机 WSL 原生 curl 直连曾返回 TLS EOF；从独立 Docker 网络及本机代理路径访问成功。未把该路径失败伪报为成功，也未为通过测试降低证书/TLS 校验。独立客户端首个检查误假定只有 IPv4 出口，核实实际为原 DMIT IPv6 后，按两种既有地址严格核对并重跑六组通过。
-- [教程截图](../cloudflare-screenshots.md) 来自真实控制台，区分未提交 DNS 草稿、实际创建 Token 和实际六条生产解析，不含凭据。
+- 原始控制台截图私密保存；公开 [配置图解](../cloudflare-screenshots.md) 使用脱敏展示副本，与真实验收证据分开。
 
 ## 未覆盖及不可替代的验收
 

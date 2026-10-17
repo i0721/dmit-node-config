@@ -43,6 +43,7 @@ ip4=$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}
 version=$(docker run --rm -v "$work/ca.crt:/ca.crt:ro" nodectl-integration-h3 --fail --silent --show-error --max-time 20 --cacert /ca.crt --resolve "node.integration.test:443:$ip4" --http3-only --output /dev/null --write-out '%{http_version}' https://node.integration.test/)
 [ "$version" = 3 ] || { echo 'External namespace HTTP3 failed' >&2; exit 1; }
 echo 'EXTERNAL_NAMESPACE_HTTP3_PASS' >> "$log"
+bash scripts/test-udp-quic.sh "$name" "nodectl-integration:$label" "$work" >> "$log" 2>&1 || { cat "$log"; exit 1; }
 docker exec "$name" touch /root/nodectl-test/network-verified
 set +e
 wait "$runtime"

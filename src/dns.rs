@@ -8,7 +8,11 @@ use std::{fs, path::Path};
 pub struct Cloudflare {
     zone: String,
     token: String,
+    #[cfg(test)]
+    fixture: Option<Box<TestTransport>>,
 }
+#[cfg(test)]
+type TestTransport = dyn Fn(&str, &str, Option<&Value>) -> Result<Value>;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Change {
@@ -39,13 +43,22 @@ impl Cloudflare {
         Ok(Self {
             zone: zone.into(),
             token,
+            #[cfg(test)]
+            fixture: None,
         })
     }
     fn request(&self, method: &str, suffix: &str, body: Option<&Value>) -> Result<Value> {
+        #[cfg(test)]
+        if let Some(fixture) = &self.fixture {
+            return fixture(method, suffix, body);
+        }
         let url = format!(
             "https://api.cloudflare.com/client/v4/zones/{}{suffix}",
             self.zone
         );
+        self.send(method, &url, body)
+    }
+    fn send(&self, method: &str, url: &str, body: Option<&Value>) -> Result<Value> {
         let mut config = format!(
             "header = \"Authorization: Bearer {}\"\nheader = \"Content-Type: application/json\"\n",
             self.token
@@ -73,7 +86,7 @@ impl Cloudflare {
                 "30",
                 "--request",
                 method,
-                &url,
+                url,
             ],
             Some(config.as_bytes()),
         )?;
@@ -84,6 +97,48 @@ impl Cloudflare {
             "Cloudflare API rejected request; response withheld"
         );
         Ok(value)
+    }
+    pub fn discover_zone(domain: &str, token: &str) -> Result<String> {
+        ensure!(
+            crate::config::domain(domain),
+            "Invalid domain for zone discovery"
+        );
+        let client = Self::new(&"0".repeat(32), token.into())?;
+        let mut suffix = domain;
+        while suffix.contains('.') {
+            let value = client.send(
+                "GET",
+                &format!("https://api.cloudflare.com/client/v4/zones?name={suffix}&per_page=50"),
+                None,
+            )?;
+            let matches = value["result"]
+                .as_array()
+                .context("Cloudflare zone list")?
+                .iter()
+                .filter(|z| z["name"] == suffix && z["status"] == "active")
+                .collect::<Vec<_>>();
+            ensure!(
+                matches.len() <= 1,
+                "Ambiguous Cloudflare zone; specify Zone ID"
+            );
+            if let Some(zone) = matches.first() {
+                let zone = zone["id"].as_str().context("Cloudflare zone ID")?;
+                ensure!(id(zone), "Invalid Cloudflare zone ID");
+                return Ok(zone.into());
+            }
+            suffix = suffix.split_once('.').unwrap().1;
+        }
+        anyhow::bail!(
+            "No authorized active Cloudflare zone found; use a Zone Read token or specify Zone ID"
+        )
+    }
+    pub fn zone_name(&self) -> Result<String> {
+        let value = self.request("GET", "", None)?;
+        let name = value["result"]["name"]
+            .as_str()
+            .context("Cloudflare zone name")?;
+        ensure!(crate::config::domain(name), "Invalid Cloudflare zone name");
+        Ok(name.into())
     }
     pub fn plan(&self, c: &Config, inherited: Option<&Config>) -> Result<Vec<Change>> {
         let zone = self.request("GET", "", None)?;
@@ -387,6 +442,67 @@ pub fn token(file: Option<&Path>) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn dns_compensation_handles_completed_pending_and_concurrent_changes() {
+        use std::{cell::RefCell, rc::Rc};
+        let records = Rc::new(RefCell::new(Vec::<Value>::new()));
+        let mut cf = Cloudflare::new(&"a".repeat(32), "fixture".into()).unwrap();
+        let state = records.clone();
+        cf.fixture = Some(Box::new(move |method, suffix, body| {
+            let mut state = state.borrow_mut();
+            let result = match method {
+                "GET" => json!(state.clone()),
+                "POST" => {
+                    let mut value = body.unwrap().clone();
+                    value["id"] = json!("b".repeat(32));
+                    state.push(value.clone());
+                    value
+                }
+                "PATCH" => {
+                    let value = state
+                        .iter_mut()
+                        .find(|r| suffix.ends_with(r["id"].as_str().unwrap()))
+                        .unwrap();
+                    for (k, v) in body.unwrap().as_object().unwrap() {
+                        value[k] = v.clone();
+                    }
+                    value.clone()
+                }
+                "DELETE" => {
+                    state.retain(|r| !suffix.ends_with(r["id"].as_str().unwrap()));
+                    json!({})
+                }
+                _ => anyhow::bail!("Unexpected fixture method"),
+            };
+            Ok(json!({"success":true,"result":result}))
+        }));
+        let mut c: Config = toml::from_str(crate::config::EXAMPLE).unwrap();
+        c.node.ipv6.clear();
+        let create = record_changes(&c.node.domain, &[], &c).unwrap().remove(0);
+        let created = cf.apply(&create).unwrap();
+        records.borrow_mut()[0]["comment"] = json!("operator-change");
+        assert!(cf.restore(&create, &created).is_err());
+        assert_eq!(records.borrow().len(), 1);
+        records.borrow_mut()[0]
+            .as_object_mut()
+            .unwrap()
+            .remove("comment");
+        cf.restore_pending(&create).unwrap();
+        cf.restore(&create, &created).unwrap(); // idempotent after DELETE
+        assert!(records.borrow().is_empty());
+        let old = json!({"id":"c".repeat(32),"type":"A","name":c.node.domain,"content":"192.0.2.20","ttl":3600,"proxied":false,"comment":"preserve","tags":["owner:fixture"],"settings":{}});
+        records.borrow_mut().push(old.clone());
+        let update = record_changes(&c.node.domain, std::slice::from_ref(&old), &c)
+            .unwrap()
+            .remove(0);
+        cf.ensure_unchanged(&update).unwrap();
+        let changed = cf.apply(&update).unwrap();
+        assert_eq!(changed["comment"], "preserve");
+        assert!(cf.ensure_unchanged(&update).is_err());
+        cf.restore_pending(&update).unwrap();
+        cf.restore(&update, &changed).unwrap();
+        assert_eq!(records.borrow()[0], old);
+    }
     #[test]
     fn reject_url_and_header_injection_before_any_request() {
         assert!(Cloudflare::new("../other-zone", "fixture".into()).is_err());

@@ -87,3 +87,71 @@ pub fn download_xray(output: &Path) -> Result<()> {
     );
     Ok(())
 }
+
+/// Test client only; not installed or started by production provisioning.
+#[allow(dead_code)]
+pub fn download_mihomo(output: &Path) -> Result<()> {
+    let locks: toml::Value = toml::from_str(include_str!("../versions.lock.toml"))?;
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "amd64",
+        "aarch64" => "arm64",
+        _ => bail!("Unsupported Mihomo architecture"),
+    };
+    ensure!(
+        cfg!(target_os = "linux"),
+        "Mihomo helper installs Linux binaries only"
+    );
+    let lock = &locks["mihomo"];
+    let work = tempfile::tempdir()?;
+    let archive = work.path().join("mihomo.gz");
+    command(
+        "curl",
+        &[
+            "--disable",
+            "--proto",
+            "=https",
+            "--tlsv1.2",
+            "--fail",
+            "--location",
+            "--silent",
+            "--show-error",
+            "--connect-timeout",
+            "20",
+            "--retry",
+            "2",
+            "--retry-all-errors",
+            "--max-time",
+            "180",
+            "-o",
+            archive.to_str().unwrap(),
+            lock[format!("linux_{arch}_url")]
+                .as_str()
+                .context("Mihomo URL")?,
+        ],
+    )?;
+    ensure!(
+        hex::encode(Sha256::digest(fs::read(&archive)?))
+            == lock[format!("linux_{arch}_archive_sha256")]
+                .as_str()
+                .context("Mihomo digest")?,
+        "Mihomo archive digest mismatch"
+    );
+    let binary = command("gzip", &["-dc", archive.to_str().unwrap()])?;
+    ensure!(!binary.is_empty(), "Empty Mihomo archive");
+    let mut staged = tempfile::NamedTempFile::new_in(output.parent().context("Output parent")?)?;
+    staged.write_all(&binary)?;
+    staged.as_file().sync_all()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        staged
+            .as_file()
+            .set_permissions(fs::Permissions::from_mode(0o755))?;
+    }
+    staged.persist(output)?;
+    println!(
+        "Verified official Mihomo {} {arch}",
+        lock["version"].as_str().unwrap()
+    );
+    Ok(())
+}

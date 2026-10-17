@@ -1097,7 +1097,7 @@ fn handshake(c: &Config, s: &Secrets, reference: &Reference, kind: &str) -> Resu
     // Local loopback is the server under test; retain the real SNI and Host.
     outbound["settings"]["vnext"][0]["address"] = json!("127.0.0.1");
     let profile = json!({"log":{"loglevel":"none"},"inbounds":[{"listen":"127.0.0.1","port":port,
-        "protocol":"socks","settings":{"auth":"noauth","udp":false}}],"outbounds":[outbound]});
+        "protocol":"socks","settings":{"auth":"noauth","udp":true}}],"outbounds":[outbound]});
     let config = tmp.path().join("client.json");
     store::atomic_write(&config, &serde_json::to_vec(&profile)?)?;
     command(
@@ -1165,13 +1165,24 @@ pub fn renew(store: &Store) -> Result<()> {
     command("systemctl", &["reload", "nginx"])?;
     // Refresh certificates in the receipt so a later rollback can still check
     // binaries against their original pins after legitimate renewal.
-    for release in [Some(id), store.pointer("previous")?].into_iter().flatten() {
+    for release in [Some(id.clone()), store.pointer("previous")?]
+        .into_iter()
+        .flatten()
+    {
         let p = store.state_dir.join("checks").join(&release);
         if !p.exists() {
             continue;
         }
         let mut r: Receipt = serde_json::from_slice(&fs::read(&p)?)?;
         let (config, _) = store.verify(&release)?;
+        if certificates(&config).is_err()
+            && release != id
+            && !config.domains().iter().all(|d| c.domains().contains(d))
+        {
+            // An explicit domain-set replacement retains the old receipt and
+            // certificate in its material backup; never bind it to new SANs.
+            continue;
+        }
         certificates(&config)?;
         let new = dependencies(&config, &r.reference)?;
         for (file, hash) in new {

@@ -4,7 +4,7 @@
 
 ## 图 1：A 记录与灰云
 
-区域 example.com 中为 dmit-qwq1、dmit-www、dmit-reality 创建 A 记录，填自己的 IPv4，代理状态“仅 DNS”，TTL 自动。203.0.113.10 仅为示例。见 [DNS 步骤](deployment.md#2-cloudflare-dns-与域名接入)。
+区域 example.com 中为 speedtest、files 创建 A 记录，填自己的 IPv4，代理状态“仅 DNS”，TTL 自动。203.0.113.10 仅为示例。见 [DNS 步骤](deployment.md#2-cloudflare-dns-与域名接入)。
 
 ## 图 2：可选 IPv6 AAAA 记录
 

@@ -27,7 +27,8 @@ jobs:
       - name: Official Xray compatibility
         run: |
           cargo run --quiet --locked --bin repo-tools -- download-xray /tmp/nodectl-xray
-          XRAY_TEST_BINARY=/tmp/nodectl-xray cargo test --locked upstream_xray_accepts -- --ignored
+          cargo run --quiet --locked --bin repo-tools -- download-mihomo /tmp/nodectl-mihomo
+          XRAY_TEST_BINARY=/tmp/nodectl-xray MIHOMO_TEST_BINARY=/tmp/nodectl-mihomo cargo test --locked upstream_ -- --ignored
   secrets:
     runs-on: ubuntu-24.04
     steps:

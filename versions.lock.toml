@@ -18,6 +18,13 @@ repository = "https://github.com/nginx/nginx"
 required_features = ["TLSv1.3", "http_v2", "http_v3"]
 pin_policy = "installed-sha256-in-check-receipt"
 
+[mihomo]
+version = "1.19.32"
+linux_amd64_url = "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.32/mihomo-linux-amd64-compatible-v1.19.32.gz"
+linux_amd64_archive_sha256 = "ba3ce607747a07f948fc35780e108a4a7c7f552a38b9bd4d115f313ebcb89c20"
+linux_arm64_url = "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.32/mihomo-linux-arm64-v1.19.32.gz"
+linux_arm64_archive_sha256 = "9dd862e28b46ff7d775f169cceebc28deccaa0a9e804237d421cd2571e0caba0"
+
 [usque]
 repository = "https://github.com/Diniboy1123/usque"
 version = "4.2.1"

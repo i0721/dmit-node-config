@@ -8,8 +8,8 @@
 2. 预览配置（必须将占位符换成实际值）：
 
 ```sh
-nodectl setup --non-interactive --domain node.example.com \
-  --reality-domain reality.example.com --aliases www.example.com \
+nodectl setup --non-interactive --domain speedtest.example.com \
+  --reality-domain files.example.com \
   --ipv4 203.0.113.10
 ```
 

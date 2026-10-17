@@ -4,7 +4,7 @@
 
 配套资源：[通用图解](visual-guide.md) · [部署记录模板](resources/deployment-record.template.md)。图解为工程示意，实际服务器必须执行验收。首次使用优先阅读 [快速开始](getting-started.md)，本页保留完整参考步骤。
 
-本轮另有 [nekobox.page 真实 Cloudflare 操作截图](cloudflare-screenshots.md)，包含 DNS 名称检查、A/AAAA 灰云表单和 Token 权限草稿；草稿与实际保存状态分别标注。自动编排入口见 [交互部署与升级](automated-deployment.md)。
+Cloudflare 字段与 A/AAAA 灰云设置见 [脱敏配置图解](cloudflare-screenshots.md)，示例截图不代表真实解析已生效。自动编排入口见 [交互部署与升级](automated-deployment.md)。
 
 ## 目录与执行顺序
 
@@ -35,11 +35,10 @@
 
 | 用途 | 完整域名 | Cloudflare「名称」字段 | 对应参数 |
 | --- | --- | --- | --- |
-| TLS 主入口、网站、默认客户端地址 | `dmit-qwq1.example.com` | `dmit-qwq1` | `node.domain` |
-| 同一 TLS 入口的别名 | `dmit-www.example.com` | `dmit-www` | `node.aliases` |
-| REALITY 默认 SNI | `dmit-reality.example.com` | `dmit-reality` | `node.reality_domain` |
+| TLS 主入口、网站、默认客户端地址 | `speedtest.example.com` | `speedtest` | `node.domain` |
+| REALITY 默认 SNI | `files.example.com` | `files` | `node.reality_domain` |
 
-以上均为 `example.com` 下的 `dmit-` 前缀子域。这里不使用根域 `@`、已有 `www` 或通配域接管其他业务。三个域名都指向同一台 DMIT；REALITY 的客户端 SNI 与 TLS 主 SNI 分开，但服务端本地 target 始终从 HTTPS 端口派生为 `127.0.0.1:443`。
+以上均为 `example.com` 下的 `speedtest`、`files` 子域。这里不使用根域 `@`、已有 `www` 或通配域接管其他业务。两个域名都指向同一台 DMIT；REALITY 的客户端 SNI 与 TLS 主 SNI 分开，但服务端本地 target 始终从 HTTPS 端口派生为 `127.0.0.1:443`。
 
 本教程仅使用 example.com 等通用示例，不记录实际账户、已有 DNS 状态或服务器信息。部署时必须根据自己的控制台与网卡核对地址、归属及已有业务。
 
@@ -47,7 +46,7 @@
 
 | 能力 | 本项目用途 | 需要做的事 |
 | --- | --- | --- |
-| 权威 DNS | 将三个子域解析到 DMIT | A/可选 AAAA，全为灰云「仅 DNS」 |
+| 权威 DNS | 将两个子域解析到 DMIT | A/可选 AAAA，全为灰云「仅 DNS」 |
 | DNS API | acme.sh 自动创建并清理 DNS-01 TXT | 单独创建仅限该 zone 的 Token |
 | WARP/MASQUE | usque 独立 TUN 调试 | 注册 usque 凭据，检查隧道，不接管默认路由 |
 
@@ -77,9 +76,8 @@ systemctl status nginx xray usque-warp --no-pager || true
 下文命令在服务器的同一个 root Bash 会话中按顺序运行；遇到未处理的错误会退出这层 Bash，应先解决错误，不继续粘贴后面的命令。变量会被后续步骤复用。重新登录/进入 Bash 后，重新设置普通变量，Token 用隐藏输入再次读取。真实 IP、邮箱、Zone ID 留在主机的私密记录中，不提交仓库。
 
 ```bash
-export DMIT_DOMAIN='dmit-qwq1.example.com'
-export DMIT_ALIAS='dmit-www.example.com'
-export DMIT_REALITY='dmit-reality.example.com'
+export DMIT_DOMAIN='speedtest.example.com'
+export DMIT_REALITY='files.example.com'
 read -r -p 'DMIT 实际公网 IPv4: ' DMIT_IPV4
 read -r -p 'DMIT 实际公网 IPv6，无则直接回车: ' DMIT_IPV6
 read -r -p 'ACME 联系邮箱: ' ACME_EMAIL
@@ -103,20 +101,18 @@ DNS 记录表中手工添加的根域 NS 不等同于注册商的权威委派；
 
 ### 2.2 建立节点记录
 
-点击「添加记录」，类型选 A，名称只填表中短名称，内容填自己 DMIT 的 IPv4，代理状态切换为 **仅 DNS（灰云）**，TTL 可用自动，保存。已有 `dmit-qwq1` 应核对并编辑原记录，不重复添加相同记录。[官方记录操作说明](https://developers.cloudflare.com/dns/manage-dns-records/how-to/create-dns-records/)
+点击「添加记录」，类型选 A，名称只填表中短名称，内容填自己 DMIT 的 IPv4，代理状态切换为 **仅 DNS（灰云）**，TTL 可用自动，保存。已有 `speedtest` 应核对并编辑原记录，不重复添加相同记录。[官方记录操作说明](https://developers.cloudflare.com/dns/manage-dns-records/how-to/create-dns-records/)
 
 | 类型 | 名称 | 内容 | 代理状态 | 条件 |
 | --- | --- | --- | --- | --- |
-| A | `dmit-qwq1` | `$DMIT_IPV4` 的实际值 | 仅 DNS | 必需 |
-| A | `dmit-www` | 同一 IPv4 | 仅 DNS | 必需，因为配置了 alias |
-| A | `dmit-reality` | 同一 IPv4 | 仅 DNS | 必需 |
-| AAAA | `dmit-qwq1` | `$DMIT_IPV6` 的实际值 | 仅 DNS | 有公网 IPv6 才添加 |
-| AAAA | `dmit-www` | 同一 IPv6 | 仅 DNS | 同上 |
-| AAAA | `dmit-reality` | 同一 IPv6 | 仅 DNS | 同上 |
+| A | `speedtest` | `$DMIT_IPV4` 的实际值 | 仅 DNS | 必需 |
+| A | `files` | 同一 IPv4 | 仅 DNS | 必需 |
+| AAAA | `speedtest` | `$DMIT_IPV6` 的实际值 | 仅 DNS | 有公网 IPv6 才添加 |
+| AAAA | `files` | 同一 IPv6 | 仅 DNS | 同上 |
 
-网页内容字段不展开 `$DMIT_IPV4`，要填地址本身。三个名称不要再有指向旧机器的 A/AAAA、冲突 CNAME 或覆盖它们的 Worker 自定义域。
+网页内容字段不展开 `$DMIT_IPV4`，要填地址本身。两个名称不要再有指向旧机器的 A/AAAA、冲突 CNAME 或覆盖它们的 Worker 自定义域。
 
-下面是 `dmit-www` 的真实 A 记录草稿。IPv4 留空、尚未保存；部署时填写自己的地址，确认灰云 **仅 DNS** 后再保存。另两条 A 记录按表格分别处理。
+旧版截图中的名称仅用于说明表单操作；新部署按本表的两个中性名称填写自己的地址，确认灰云 **仅 DNS** 后保存。
 
 [通用操作图解](visual-guide.md)
 
@@ -127,7 +123,7 @@ IPv6 对应的 AAAA 表单见 [图 2](visual-guide.md#图-2可选-ipv6-aaaa-记�
 ### 2.3 确认解析与 CAA
 
 ```bash
-for name in "$DMIT_DOMAIN" "$DMIT_ALIAS" "$DMIT_REALITY"; do
+for name in "$DMIT_DOMAIN" "$DMIT_REALITY"; do
   printf '\n%s\n' "$name"
   dig +short A "$name" @1.1.1.1
   dig +short AAAA "$name" @1.1.1.1
@@ -136,7 +132,7 @@ done
 dig +short CAA example.com @1.1.1.1
 ```
 
-A 必须返回自己的 DMIT IPv4；配置 IPv6 时 AAAA 也必须正确。没有 IPv6 时不要遗留旧 AAAA。DNS 缓存未过期时，同时向权威服务器查询确认，不要用反复修改记录来“刷新”。若已有 CAA 限制签发机构，确认对三个子域生效的策略允许 `letsencrypt.org`；不存在 CAA 时无须专门新增。不要删除其他业务的 CAA 或邮件 TXT。[CAA 字段说明](https://developers.cloudflare.com/dns/manage-dns-records/reference/dns-record-types/#caa)
+A 必须返回自己的 DMIT IPv4；配置 IPv6 时 AAAA 也必须正确。没有 IPv6 时不要遗留旧 AAAA。DNS 缓存未过期时，同时向权威服务器查询确认，不要用反复修改记录来“刷新”。若已有 CAA 限制签发机构，确认对两个子域生效的策略允许 `letsencrypt.org`；不存在 CAA 时无须专门新增。不要删除其他业务的 CAA 或邮件 TXT。[CAA 字段说明](https://developers.cloudflare.com/dns/manage-dns-records/reference/dns-record-types/#caa)
 
 ## 3. Cloudflare API Token
 
@@ -356,13 +352,13 @@ chmod 0700 /etc/dmit-node
 chmod 0600 /etc/dmit-node/node.toml /etc/dmit-node/secrets.json
 ```
 
-`init` 已采用本教程三个域名，仍需编辑 `/etc/dmit-node/node.toml` 的真实 IP。只修改普通参数，不用 `cp` 整份示例覆盖初始化结果，以免丢失已随机化的路径。node 段最终应为：
+`init` 已采用本教程两个域名，仍需编辑 `/etc/dmit-node/node.toml` 的真实 IP。只修改普通参数，不用 `cp` 整份示例覆盖初始化结果，以免丢失已随机化的路径。node 段最终应为：
 
 ```toml
 [node]
-domain = "dmit-qwq1.example.com"
-aliases = ["dmit-www.example.com"]
-reality_domain = "dmit-reality.example.com"
+domain = "speedtest.example.com"
+aliases = []
+reality_domain = "files.example.com"
 ipv4 = "203.0.113.10" # 必须替换成自己的实际公网 IPv4
 ipv6 = ""           # 有可达 IPv6 时填写实际地址
 ```
@@ -385,7 +381,7 @@ ipv6 = ""           # 有可达 IPv6 时填写实际地址
 生成一个简单静态首页，让网站根可读；已有站点应保留原内容：
 
 ```bash
-test -e /var/www/html/index.html || printf '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>DMIT</title><h1>DMIT node</h1></html>\n' > /var/www/html/index.html
+test -e /var/www/html/index.html || printf '<!doctype html><html lang="en"><meta charset="utf-8"><title>Welcome</title><h1>Welcome</h1><p>This site is available.</p></html>\n' > /var/www/html/index.html
 chmod 0644 /var/www/html/index.html
 nodectl validate
 ```
@@ -415,11 +411,11 @@ chmod 0700 /root/.acme.sh
 
 ```bash
 /root/.acme.sh/acme.sh --issue --server letsencrypt --dns dns_cf \
-  -d "$DMIT_DOMAIN" -d "$DMIT_ALIAS" -d "$DMIT_REALITY" \
+  -d "$DMIT_DOMAIN" -d "$DMIT_REALITY" \
   --keylength ec-384
 ```
 
-DNS-01 不依赖此时 Nginx 运行，也不要求为验证开放 80。acme.sh 会为三个名称写入 `_acme-challenge` TXT，并在验证后清理；不要手工永久保留验证码。检查传播问题时只查询对应名称：
+DNS-01 不依赖此时 Nginx 运行，也不要求为验证开放 80。acme.sh 会为两个名称写入 `_acme-challenge` TXT，并在验证后清理；不要手工永久保留验证码。检查传播问题时只查询对应名称：
 
 ```bash
 dig +short TXT "_acme-challenge.$DMIT_DOMAIN" @1.1.1.1
@@ -638,23 +634,23 @@ ip -6 route show default
 以下命令在外部客户端执行，先将 `$DMIT_IPV4` 设置成自己的实际地址；IPv6 测试只在启用 IPv6 时进行：
 
 ```bash
-curl --fail --head https://dmit-qwq1.example.com/
-curl --fail --head https://dmit-www.example.com/
-curl --fail --head --resolve "dmit-qwq1.example.com:443:$DMIT_IPV4" \
-  https://dmit-qwq1.example.com/
+curl --fail --head https://speedtest.example.com/
+curl --fail --head https://files.example.com/
+curl --fail --head --resolve "speedtest.example.com:443:$DMIT_IPV4" \
+  https://speedtest.example.com/
 openssl s_client -connect "$DMIT_IPV4:443" \
-  -servername dmit-qwq1.example.com \
-  -verify_hostname dmit-qwq1.example.com -verify_return_error </dev/null
+  -servername speedtest.example.com \
+  -verify_hostname speedtest.example.com -verify_return_error </dev/null
 curl --fail --head "https://$DMIT_IPV4/"
 curl -V
 ```
 
-域名返回域名证书，IP 直接访问返回 IP SAN 证书；HTTPS 响应应有 `Alt-Svc: h3=":443"; ma=86400`。这只是 H3 广告，不能证明 UDP 可达。若 curl 的 features 支持 HTTP3，再执行 `curl --http3-only --head https://dmit-qwq1.example.com/`；否则用支持 H3 的客户端测试，不把普通 H2 请求当 H3 结果。不要添加 `-k` 来掩盖证书错误。
+域名返回域名证书，IP 直接访问返回 IP SAN 证书；HTTPS 响应应有 `Alt-Svc: h3=":443"; ma=86400`。这只是 H3 广告，不能证明 UDP 可达。若 curl 的 features 支持 HTTP3，再执行 `curl --http3-only --head https://speedtest.example.com/`；否则用支持 H3 的客户端测试，不把普通 H2 请求当 H3 结果。不要添加 `-k` 来掩盖证书错误。
 
 验证 HTTP-01 的长期入口仍然可达：
 
 ```bash
-curl --fail http://dmit-qwq1.example.com/.well-known/acme-challenge/probe
+curl --fail http://speedtest.example.com/.well-known/acme-challenge/probe
 ```
 
 同时用裸 IP 请求该路径，确保后续 IP 证书续期不依赖 DNS 域名或 HTTPS 重定向。
@@ -671,11 +667,11 @@ chmod 0600 /root/exports/profiles.json
 
 | Profile | 地址/端口 | SNI | 传输 | ALPN |
 | --- | --- | --- | --- | --- |
-| XHTTP TLS | `dmit-qwq1.example.com:443` | `dmit-qwq1.example.com` | XHTTP stream-one，生成路径 | H2 |
+| XHTTP TLS | `speedtest.example.com:443` | `speedtest.example.com` | XHTTP stream-one，生成路径 | H2 |
 | WS TLS | 同上 | 同上 | WS，生成的精确路径 | HTTP/1.1 |
-| REALITY | `dmit-qwq1.example.com:8443` | `dmit-reality.example.com` | XHTTP stream-one，第三条路径 | 由参考客户端配置处理 |
+| REALITY | `speedtest.example.com:8443` | `files.example.com` | XHTTP stream-one，第三条路径 | 由参考客户端配置处理 |
 
-REALITY address 使用主域是当前生成器的行为；它与 reality 域都应解析到同一 DMIT，SNI 仍是独立的 `dmit-reality`。公钥/Short ID/UUID 从导出读取，不复制服务端私钥。80/15/5 是客户端分配权重，服务端不随机分流；四种 XHTTP 指纹内部比例为 5/2/3/1。
+REALITY address 使用主域是当前生成器的行为；它与 reality 域都应解析到同一 DMIT，SNI 仍是独立的 `files`。公钥/Short ID/UUID 从导出读取，不复制服务端私钥。80/15/5 是客户端分配权重，服务端不随机分流；四种 XHTTP 指纹内部比例为 5/2/3/1。
 
 ## 11. 无人值守续期与监控
 
@@ -759,7 +755,7 @@ nodectl recover
 
 | 现象 | 优先核查 | 下一步 |
 | --- | --- | --- |
-| DNS 返回 Cloudflare IP 或其他机器 | 灰云、重复 A/AAAA、CNAME/Worker、缓存 | 对比权威和公共解析；仅修正这三个子域 |
+| DNS 返回 Cloudflare IP 或其他机器 | 灰云、重复 A/AAAA、CNAME/Worker、缓存 | 对比权威和公共解析；仅修正这两个子域 |
 | DNS-01 无法写 TXT | Token DNS Edit/Zone Read、zone 限制、ID、Token TTL/IP 过滤 | 验证 API 与 acme.sh 保存凭据，检查 CAA；不暴露 Token 日志 |
 | 域名证书只有一个 SAN | 首次签发参数是否完整 | 以主域为首个 -d，包含 alias/reality，重装证书 |
 | IP HTTP-01 失败 | 公网 80、防火墙、IPv6 可达性、bootstrap/webroot | 从外部裸 IP 请求 probe，检查是否被重定向/错误服务接收 |
@@ -815,7 +811,7 @@ fi
 
 交付前逐项检查：
 
-- [ ] 三个 dmit- 子域的真实解析正确，未变更根域/邮件/其他业务。
+- [ ] 两个中性子域的真实解析正确，未变更根域/邮件/其他业务。
 - [ ] Token 仅限 example.com、凭据和导出未入 Git，文件权限正确。
 - [ ] 域名证书精确覆盖三名且为 P-384；IP 证书覆盖全部启用地址，信任链和有效期合格。
 - [ ] bootstrap 已退出，最终 HTTP-01 webroot 可从公网裸 IP 访问。

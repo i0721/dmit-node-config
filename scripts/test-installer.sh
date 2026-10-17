@@ -25,6 +25,37 @@ test "$(sha256sum "$prefix/lib/nodectl/versions/$legacy_hash" | cut -d ' ' -f 1)
 test "$(sha256sum "$prefix/legacy-inputs/config/"* | sha256sum | cut -d ' ' -f 1)" = "$config_hash"
 echo 'ACTUAL_0_1_BINARY_AND_INPUT_UPGRADE_PASS'
 original=$(sha256sum "$prefix/bin/nodectl" | cut -d ' ' -f 1)
+if sh "$script" --version "$version" --prefix "$prefix" --bundle-dir "$bundle" </dev/null > "$prefix/no-tty.log" 2>&1; then exit 1; fi
+grep -q 'requires a terminal' "$prefix/no-tty.log"
+test "$(sha256sum "$prefix/bin/nodectl" | cut -d ' ' -f 1)" = "$original"
+install -m 0755 "$legacy" "$prefix/bin/nodectl"
+if printf 'invalid-domain\n\n\n\n\n\n\n\n\n' | script -q -e -c "sh '$script' --version '$version' --prefix '$prefix' --bundle-dir '$bundle' --config-dir '$prefix/legacy-inputs/config' --state-dir '$prefix/wizard-state'" "$prefix/wizard-failure.log" >/dev/null; then exit 1; fi
+grep -q "Installed $version" "$prefix/wizard-failure.log"
+grep -q 'original program and deployment preserved' "$prefix/wizard-failure.log"
+test "$(sha256sum "$prefix/bin/nodectl" | cut -d ' ' -f 1)" = "$legacy_hash"
+test "$(sha256sum "$prefix/legacy-inputs/config/"* | sha256sum | cut -d ' ' -f 1)" = "$config_hash"
+sh "$script" "${args[@]}" --execute
+test "$(sha256sum "$prefix/bin/nodectl" | cut -d ' ' -f 1)" = "$original"
+echo 'SIGNED_WIZARD_FAILURE_RESTORES_OLD_PROGRAM_AND_NO_TTY_REFUSED_PASS'
+# A transport interruption after a valid signed manifest must preserve the tool.
+mkdir -m 0700 "$prefix/interrupted-download"
+cat > "$prefix/interrupted-download/curl" <<'SH'
+#!/bin/sh
+set -eu
+out= name=
+while [ "$#" -gt 0 ]; do
+  case "$1" in -o) out=$2; shift 2;; https://github.com/*) name=${1##*/}; shift;; *) shift;; esac
+done
+case "$name" in
+  SHA256SUMS|SHA256SUMS.sigstore.json) cp "$NODECTL_SIGNED_TEST_BUNDLE/$name" "$out";;
+  nodectl-*.tar.gz) printf interrupted > "$out"; exit 56;;
+  *) exit 64;;
+esac
+SH
+chmod 0700 "$prefix/interrupted-download/curl"
+if PATH="$prefix/interrupted-download:$PATH" NODECTL_SIGNED_TEST_BUNDLE="$bundle" sh "$script" --version "$version" --prefix "$prefix" --config-dir "$prefix/legacy-inputs/config" --execute > "$prefix/interrupted-download.log" 2>&1; then exit 1; fi
+test "$(sha256sum "$prefix/bin/nodectl" | cut -d ' ' -f 1)" = "$original"
+echo 'SIGNED_DOWNLOAD_INTERRUPTION_PRESERVES_PROGRAM_PASS'
 # The same valid signature must be rejected under a different tag identity,
 # before any archive can be selected or executed.
 if sh "$script" --version v9999.0.0 --prefix "$prefix" --bundle-dir "$bundle" --execute; then echo 'Wrong workflow identity accepted' >&2; exit 1; fi

@@ -11,10 +11,10 @@ use std::{
 use uuid::Uuid;
 
 macro_rules! model {
-    ($name:ident { $($field:ident : $ty:ty),* $(,)? }) => {
+    ($name:ident { $($(#[$attr:meta])* $field:ident : $ty:ty),* $(,)? }) => {
         #[derive(Clone, Serialize, Deserialize, JsonSchema)]
         #[serde(deny_unknown_fields)]
-        pub struct $name { $(pub $field: $ty),* }
+        pub struct $name { $($(#[$attr])* pub $field: $ty),* }
     };
 }
 model!(Config {
@@ -26,8 +26,11 @@ model!(Config {
     website: Website,
     runtime: Runtime,
     clients: Clients,
-    warp: Warp
+    warp: Warp,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    vless: Option<Vless>
 });
+model!(Vless { encryption: bool });
 model!(Node { domain: String, aliases: Vec<String>, reality_domain: String, ipv4: String, ipv6: String });
 model!(Ports {
     http: u16,
@@ -85,6 +88,37 @@ pub struct Secrets {
     pub reality_uuid: String,
     pub reality_private_key: String,
     pub reality_short_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vless: Option<EncryptionSecrets>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EncryptionPair {
+    pub decryption: String,
+    pub encryption: String,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EncryptionSecrets {
+    pub xhttp: EncryptionPair,
+    pub ws: EncryptionPair,
+    pub reality: EncryptionPair,
+}
+impl Config {
+    pub fn encrypted(&self) -> bool {
+        self.vless.as_ref().is_some_and(|v| v.encryption)
+    }
+}
+impl EncryptionSecrets {
+    pub fn pair(&self, kind: &str) -> &EncryptionPair {
+        match kind {
+            "xhttp" => &self.xhttp,
+            "ws" => &self.ws,
+            "reality" => &self.reality,
+            _ => unreachable!("validated transport"),
+        }
+    }
 }
 
 pub const EXAMPLE: &str = include_str!("../config/node.example.toml");
@@ -106,13 +140,20 @@ impl Secrets {
         Ok(URL_SAFE_NO_PAD.encode(x25519_dalek::PublicKey::from(&private).as_bytes()))
     }
     pub fn sensitive(&self) -> Vec<&str> {
-        vec![
+        let mut values: Vec<&str> = vec![
             &self.xhttp_uuid,
             &self.ws_uuid,
             &self.reality_uuid,
             &self.reality_private_key,
             &self.reality_short_id,
-        ]
+        ];
+        if let Some(keys) = &self.vless {
+            for kind in ["xhttp", "ws", "reality"] {
+                values.push(&keys.pair(kind).decryption);
+                values.push(&keys.pair(kind).encryption);
+            }
+        }
+        values
     }
 }
 
@@ -198,6 +239,31 @@ impl Config {
 }
 
 pub fn validate(c: &Config, s: &Secrets) -> Result<()> {
+    if c.encrypted() {
+        let keys = s.vless.as_ref().context(
+            "VLESS Encryption keys missing; initialize them explicitly before rendering",
+        )?;
+        let mut unique = BTreeSet::new();
+        for kind in ["xhttp", "ws", "reality"] {
+            let pair = keys.pair(kind);
+            for (value, prefix, size) in [
+                (&pair.decryption, "mlkem768x25519plus.native.600s.", 64),
+                (&pair.encryption, "mlkem768x25519plus.native.0rtt.", 1184),
+            ] {
+                let bytes = value
+                    .strip_prefix(prefix)
+                    .and_then(|key| URL_SAFE_NO_PAD.decode(key).ok());
+                ensure!(
+                    bytes.is_some_and(|b| b.len() == size && b.iter().any(|&v| v != 0)),
+                    "Invalid VLESS Encryption parameter"
+                );
+            }
+            ensure!(
+                unique.insert(&pair.decryption),
+                "VLESS Encryption keys must be independent per transport"
+            );
+        }
+    }
     ensure!(c.schema_version == 1, "Unsupported schema_version");
     ensure!(
         c.domains().iter().all(|d| domain(d)),
@@ -359,6 +425,53 @@ fn merge_missing(current: &mut toml::Value, defaults: &toml::Value) {
     }
 }
 
+/// Preview validates structure without manufacturing usable encryption material.
+pub fn validate_preview(c: &Config, s: &Secrets) -> Result<()> {
+    let mut structural = c.clone();
+    if s.vless.is_none() {
+        structural.vless = None;
+    }
+    validate(&structural, s)
+}
+
+pub fn encryption_keys(c: &Config, s: &mut Secrets) -> Result<()> {
+    if !c.encrypted() || s.vless.is_some() {
+        return Ok(());
+    }
+    let version = super::host::command(&c.runtime.xray_binary, &["version"])?;
+    ensure!(
+        version.split_whitespace().any(|v| v == "26.10.10"),
+        "Encryption key generation requires locked Xray 26.10.10"
+    );
+    let pair = || -> Result<EncryptionPair> {
+        let output = super::host::command(&c.runtime.xray_binary, &["vlessenc"])?;
+        let section = output
+            .split("Authentication: ML-KEM-768")
+            .nth(1)
+            .context("Xray did not return ML-KEM-768 parameters")?;
+        let field = |name: &str| -> Result<String> {
+            section
+                .lines()
+                .find_map(|line| {
+                    let (label, value) = line.trim().split_once(':')?;
+                    (label.trim_matches('"') == name)
+                        .then(|| value.trim().trim_matches('"').to_owned())
+                })
+                .context("Incomplete VLESS Encryption pair")
+        };
+        Ok(EncryptionPair {
+            decryption: field("decryption")?,
+            encryption: field("encryption")?,
+        })
+    };
+    s.vless = Some(EncryptionSecrets {
+        xhttp: pair()?,
+        ws: pair()?,
+        reality: pair()?,
+    });
+    validate(c, s)
+}
+
 pub fn init(dir: &Path, example: Option<&Path>, rotate: &[String]) -> Result<()> {
     let allowed = [
         "xhttp_uuid",
@@ -414,6 +527,10 @@ pub fn init(dir: &Path, example: Option<&Path>, rotate: &[String]) -> Result<()>
     } else {
         defaults.clone()
     };
+    // Re-running init must not silently enable encryption in a legacy deployment.
+    if config_path.exists() && config.get("vless").is_none() {
+        defaults.as_table_mut().unwrap().remove("vless");
+    }
     merge_missing(&mut config, &defaults);
     for field in rotate.iter().filter(|s| s.starts_with("transport.")) {
         let p: Vec<_> = field.split('.').collect();
@@ -452,6 +569,7 @@ pub fn init(dir: &Path, example: Option<&Path>, rotate: &[String]) -> Result<()>
     if s.reality_short_id.is_empty() || rotate.iter().any(|s| s == "reality_short_id") {
         s.reality_short_id = hex::encode(rand::random::<[u8; 8]>());
     }
+    encryption_keys(&c, &mut s)?;
     if let Err(e) = validate(&c, &s) {
         bail!("Initialization validation failed: {e}");
     }

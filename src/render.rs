@@ -3,7 +3,7 @@ use anyhow::{Result, ensure};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-pub const TEMPLATE_VERSION: &str = "1";
+pub const TEMPLATE_VERSION: &str = "2";
 
 pub fn template(source: &str, vars: &BTreeMap<&str, String>) -> Result<String> {
     let mut env = minijinja::Environment::new();
@@ -48,14 +48,27 @@ pub fn xray(c: &Config, s: &Secrets) -> Value {
         reality["streamSettings"]["sockopt"] = json!({"v6only":true});
         inbounds.push(reality);
     }
+    if c.encrypted() {
+        let keys = s.vless.as_ref().expect("validated encryption keys");
+        for inbound in &mut inbounds {
+            let kind = if inbound["tag"] == "vless-xhttp" {
+                "xhttp"
+            } else if inbound["tag"] == "vless-ws" {
+                "ws"
+            } else {
+                "reality"
+            };
+            inbound["settings"]["decryption"] = json!(keys.pair(kind).decryption);
+            inbound["settings"]["clients"][0]["flow"] = json!("xtls-rprx-vision");
+        }
+    }
     let direct = json!({"tag":"direct","protocol":"freedom"});
     // The isolated HTTPS fixture is local. Xray blocks private destinations by
     // default; allow only this test endpoint without weakening release output.
     #[cfg(feature = "integration-test")]
     let direct = {
         let mut direct = direct;
-        direct["settings"] =
-            json!({"finalRules":[{"action":"allow","ip":["127.0.0.1/32"],"port":"9443"}]});
+        direct["settings"] = json!({"finalRules":[{"action":"allow","ip":["127.0.0.1/32"],"port":"9443"},{"action":"allow","ip":["198.18.0.2/32"],"port":"53,443,14444"}]});
         direct
     };
     json!({"log":{"loglevel":"warning","access":format!("{}/xray/access.log",c.runtime.log_root),
@@ -101,16 +114,62 @@ pub fn outbound(c: &Config, s: &Secrets, kind: &str, fingerprint: &str) -> Resul
         // stream-one uses HTTP/2. h3 is advertised by Nginx, but is not forced on
         // a TCP uTLS client that cannot implement QUIC merely by selecting ALPN.
         stream["tlsSettings"] = json!({"serverName":sni,"fingerprint":fingerprint,"allowInsecure":false,
-            "alpn":if network == "ws" {vec!["http/1.1"]} else {vec!["h2"]},"minVersion":"1.3"});
+            "alpn":if network == "ws" {vec!["http/1.1"]} else {vec!["h2", "http/1.1"]},"minVersion":"1.3"});
     } else {
         stream["realitySettings"] = json!({"serverName":sni,"fingerprint":fingerprint,
             "password":s.public_key()?,"shortId":s.reality_short_id});
     }
-    Ok(
-        json!({"tag":format!("{kind}-{fingerprint}"),"protocol":"vless",
+    let mut profile = json!({"tag":format!("{kind}-{fingerprint}"),"protocol":"vless",
         "settings":{"vnext":[{"address":c.node.domain,"port":port,"users":[{"id":id,"encryption":"none"}]}]},
-        "streamSettings":stream}),
-    )
+        "streamSettings":stream});
+    if c.encrypted() {
+        profile["settings"]["vnext"][0]["users"][0]["encryption"] = json!(
+            s.vless
+                .as_ref()
+                .expect("validated encryption keys")
+                .pair(kind)
+                .encryption
+        );
+        profile["settings"]["vnext"][0]["users"][0]["flow"] = json!("xtls-rprx-vision-udp443");
+    }
+    Ok(profile)
+}
+
+/// JSON is a YAML 1.2 subset accepted by Mihomo; use one safe serializer,
+/// including for arbitrary operator-supplied paths, instead of interpolating YAML.
+pub fn mihomo(c: &Config, s: &Secrets) -> Result<Vec<u8>> {
+    let profiles = profiles(c, s)?;
+    let mut proxies = vec![];
+    for p in profiles["profiles"].as_array().unwrap() {
+        let o = &p["outbound"];
+        let stream = &o["streamSettings"];
+        let user = &o["settings"]["vnext"][0]["users"][0];
+        let real = stream["security"] == "reality";
+        let tls = if real {
+            &stream["realitySettings"]
+        } else {
+            &stream["tlsSettings"]
+        };
+        let mut node = json!({"name":p["name"],"type":"vless","server":o["settings"]["vnext"][0]["address"],"port":o["settings"]["vnext"][0]["port"],"uuid":user["id"],"udp":true,"packet-encoding":"xudp","tls":true,"servername":tls["serverName"],"client-fingerprint":tls["fingerprint"],"skip-cert-verify":false,"network":stream["network"]});
+        if stream["network"] == "ws" {
+            node["alpn"] = json!(["http/1.1"]);
+            node["ws-opts"] = stream["wsSettings"].clone();
+        } else {
+            node["alpn"] = json!(["h2", "http/1.1"]);
+            node["xhttp-opts"] = stream["xhttpSettings"].clone();
+        }
+        if real {
+            // The pinned REALITY server requires the hybrid key share. Mihomo
+            // otherwise strips it from its fingerprint by default.
+            node["reality-opts"] = json!({"public-key":tls["password"],"short-id":tls["shortId"],"support-x25519mlkem768":true});
+        }
+        if c.encrypted() {
+            node["encryption"] = user["encryption"].clone();
+            node["flow"] = json!("xtls-rprx-vision");
+        }
+        proxies.push(node);
+    }
+    serde_json::to_vec_pretty(&json!({"proxies":proxies})).map_err(Into::into)
 }
 
 pub fn profiles(c: &Config, s: &Secrets) -> Result<Value> {
@@ -222,6 +281,46 @@ pub fn files(c: &Config, s: &Secrets) -> Result<BTreeMap<String, Vec<u8>>> {
                 .to_string(),
         ),
     ]);
+    let operations = operations(c);
+    let mut files = BTreeMap::from([
+        ("xray.json".into(), serde_json::to_vec_pretty(&xray(c, s))?),
+        (
+            "clients/profiles.json".into(),
+            serde_json::to_vec_pretty(&profiles(c, s)?)?,
+        ),
+        (
+            "operations.json".into(),
+            serde_json::to_vec_pretty(&operations)?,
+        ),
+        (
+            "source/node.toml".into(),
+            toml::to_string_pretty(c)?.into_bytes(),
+        ),
+        ("source/secrets.json".into(), serde_json::to_vec_pretty(s)?),
+    ]);
+    for (name, source) in [
+        ("nginx.conf", include_str!("../templates/nginx.conf.tpl")),
+        (
+            "systemd/xray.service",
+            include_str!("../templates/xray.service.tpl"),
+        ),
+        (
+            "systemd/nginx.service",
+            include_str!("../templates/nginx.service.tpl"),
+        ),
+        (
+            "systemd/usque-warp.service",
+            include_str!("../templates/usque-warp.service.tpl"),
+        ),
+    ] {
+        files.insert(name.into(), template(source, &vars)?.into_bytes());
+    }
+    Ok(files)
+}
+
+/// Shared non-secret deployment operations, usable before key initialization.
+pub fn operations(c: &Config) -> Value {
+    let p = &c.ports;
     let mut domain_issue = vec![
         "--issue".to_owned(),
         "--server".into(),
@@ -265,7 +364,7 @@ pub fn files(c: &Config, s: &Secrets) -> Result<BTreeMap<String, Vec<u8>>> {
             "/usr/local/bin/nodectl renew-hook".into(),
         ]
     };
-    let operations = json!({"schema_version":1,"template_version":TEMPLATE_VERSION,
+    json!({"schema_version":1,"template_version":TEMPLATE_VERSION,
         "dns":c.domains().iter().flat_map(|d| c.ips().iter().map(|ip| json!({"name":d,"type":if ip.contains(':') {"AAAA"} else {"A"},"value":ip})).collect::<Vec<_>>()).collect::<Vec<_>>(),
         "certificates":{"domain":{"sans":c.domains(),"keylength":"ec-384","directory":c.tls.domain_cert_dir,
             "acme_issue_args":domain_issue,"acme_install_args":install(&c.node.domain,&c.tls.domain_cert_dir)},
@@ -278,39 +377,5 @@ pub fn files(c: &Config, s: &Secrets) -> Result<BTreeMap<String, Vec<u8>>> {
         "warnings":["REALITY with a local Nginx target requires a real handshake check.","DNS, certificate issuance, binary installation and WARP registration are separate provisioning steps."],
         "directories":[{"path":format!("{}/xray",c.runtime.log_root),"owner":c.runtime.xray_user,"group":c.runtime.nginx_user,"mode":"0750"},
             {"path":format!("{}/nginx",c.runtime.log_root),"owner":"root","mode":"0755"}],
-        "client_transport_weights":{"xhttp":c.clients.xhttp_weight,"ws":c.clients.ws_weight,"reality":c.clients.reality_weight}});
-    let mut files = BTreeMap::from([
-        ("xray.json".into(), serde_json::to_vec_pretty(&xray(c, s))?),
-        (
-            "clients/profiles.json".into(),
-            serde_json::to_vec_pretty(&profiles(c, s)?)?,
-        ),
-        (
-            "operations.json".into(),
-            serde_json::to_vec_pretty(&operations)?,
-        ),
-        (
-            "source/node.toml".into(),
-            toml::to_string_pretty(c)?.into_bytes(),
-        ),
-        ("source/secrets.json".into(), serde_json::to_vec_pretty(s)?),
-    ]);
-    for (name, source) in [
-        ("nginx.conf", include_str!("../templates/nginx.conf.tpl")),
-        (
-            "systemd/xray.service",
-            include_str!("../templates/xray.service.tpl"),
-        ),
-        (
-            "systemd/nginx.service",
-            include_str!("../templates/nginx.service.tpl"),
-        ),
-        (
-            "systemd/usque-warp.service",
-            include_str!("../templates/usque-warp.service.tpl"),
-        ),
-    ] {
-        files.insert(name.into(), template(source, &vars)?.into_bytes());
-    }
-    Ok(files)
+        "client_transport_weights":{"xhttp":c.clients.xhttp_weight,"ws":c.clients.ws_weight,"reality":c.clients.reality_weight}})
 }

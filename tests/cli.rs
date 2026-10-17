@@ -16,6 +16,23 @@ fn invoke(root: &Path, args: &[&str]) -> Output {
         .output()
         .unwrap()
 }
+
+#[test]
+fn wizard_refuses_non_terminal_and_implicit_approval_without_writes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = invoke(tmp.path(), &["deploy", "--wizard"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("requires a terminal"));
+    for option in ["--non-interactive", "--execute"] {
+        assert!(
+            !invoke(tmp.path(), &["deploy", "--wizard", option])
+                .status
+                .success()
+        );
+    }
+    assert!(!tmp.path().join("config").exists());
+    assert!(!tmp.path().join("state").exists());
+}
 fn setup_args(xray: &Path) -> Vec<String> {
     vec![
         "setup",
@@ -33,18 +50,28 @@ fn setup_args(xray: &Path) -> Vec<String> {
     .map(String::from)
     .collect()
 }
+fn keygen_stub(path: &Path) {
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    let counter = path.with_extension("counter");
+    let mut script = format!(
+        "#!/bin/sh\ncase \"$1\" in\nversion) echo 'Xray 26.10.10';;\nx25519) echo 'PrivateKey: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc';;\nvlessenc) i=$(cat '{}' 2>/dev/null || echo 0); i=$((i+1)); echo \"$i\" > '{}'; case \"$i\" in\n",
+        counter.display(),
+        counter.display()
+    );
+    for i in 1..=3 {
+        script.push_str(&format!("{i}) printf 'Authentication: ML-KEM-768, Post-Quantum\\n\"decryption\": \"mlkem768x25519plus.native.600s.{}\"\\n\"encryption\": \"mlkem768x25519plus.native.0rtt.{}\"\\n';;\n", URL_SAFE_NO_PAD.encode(vec![i;64]), URL_SAFE_NO_PAD.encode(vec![i;1184])));
+    }
+    script.push_str("esac;;\nesac\n");
+    fs::write(path, script).unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+}
 #[test]
 fn preview_is_read_only_and_execute_is_atomic_and_refuses_overwrite() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
     let fake = root.join("xray");
     // Only key generation is stubbed; no services or deployment are simulated.
-    fs::write(
-        &fake,
-        "#!/bin/sh\nprintf 'PrivateKey: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\\n'\n",
-    )
-    .unwrap();
-    fs::set_permissions(&fake, fs::Permissions::from_mode(0o700)).unwrap();
+    keygen_stub(&fake);
     let mut args = setup_args(&fake);
     let output = invoke(root, &args.iter().map(String::as_str).collect::<Vec<_>>());
     assert!(

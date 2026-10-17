@@ -13,7 +13,7 @@ nodectl deploy --non-interactive --domain-suffix example.com \
   --ipv4 203.0.113.10 --ipv6 '' --warp false
 ```
 
-新配置继承 `config/node.example.toml` 的全部 DMIT 基线。默认名称为 `dmit-qwq1`、`dmit-www`、`dmit-reality`；`--subdomain-prefix` 可调整前缀，完整名称可用 `--domain/--aliases/--reality-domain` 覆盖。`--http-port/--https-port/--reality-port` 修改同一 Ports 模型；REALITY target、监听与客户端地址自动派生。无 IPv6 时显式 `--ipv6 ''`；自动检测排除 tun/warp/docker/bridge 接口，多地址要求显式选择。
+新配置继承 `config/node.example.toml` 的全部平台专用基线。默认主域为 `speedtest`，REALITY SNI 为 `files`，无默认别名，两名称共同解析及签发证书；`--subdomain-prefix` 可添加自定义前缀，完整名称可用 `--domain/--aliases/--reality-domain` 覆盖。`--http-port/--https-port/--reality-port` 修改同一 Ports 模型；REALITY target、监听与客户端地址自动派生。无 IPv6 时显式 `--ipv6 ''`；自动检测排除 tun/warp/docker/bridge 接口，多地址要求显式选择。
 
 已有有效配置优先保留，包括 UUID、REALITY 密钥、short ID、传输路径、权重、证书路径和 WARP 凭据。只有显式参数或交互输入覆盖所选字段。可用 owner-only 的完整 `--input /root/candidate.toml` 提交手工配置，仍走相同校验与执行逻辑。
 
@@ -78,10 +78,32 @@ recover 先核验备份并还原准备文件，再处理原服务事务、原快
 
 恢复同时还原原服务的运行和开机启用状态。失败过程中产生的新证书、密钥及 WARP 材料先保存在该次备份的私密 `failed-material` 中，再恢复旧文件，便于人工核查已产生的外部资源。
 
-## 上游依据
+## 中性页面、加密与 UDP/QUIC
+
+0.3 新配置默认 `[vless] encryption = true`。手动 setup/init 需要先准备锁定 Xray，deploy 则在依赖准备完成后生成参数。XHTTP TLS、WS TLS、XHTTP REALITY 各使用独立的 ML-KEM-768 参数对；render/预览不会生成或轮换。旧配置缺少该节时继续按旧协议解释。显式迁移使用 `--vless-encryption true`，属于需要同步更新客户端的切换。
+
+`--replace-domain-set` 明确取消自动保留旧域名；未指定 aliases 时清空原别名。这个选项会改变证书 SAN 和客户端 SNI，计划中必须审阅。旧 DNS 不自动清理，部署成功也不意味着旧 DNS 已退役。
+
+首页缺失或与已知供应商占位页完全一致时，生成中性的 Welcome 页面；其他内容和符号链接保持人工管理。新旧首页、证书和凭据参与准备备份，完成后的部署材料记录用于 `rollback`。现场漂移、缺失备份或过期证书会阻止回滚，不绕过原校验。
+
+```sh
+nodectl export-clients --format all --output /root/client-bundle
+# profiles.json：Xray；proxies.yaml：Mihomo 节点；weights.json：原权重
+nodectl rollback --token-file /root/cf-token
+nodectl recover --token-file /root/cf-token
+```
+
+Mihomo 节点使用 JSON 形式的 YAML 1.2，避免手拼字符串导致注入；不会覆盖用户现有规则或策略组。全部节点启用 UDP/XUDP；Vision 在 Xray 客户端表达为 `xtls-rprx-vision-udp443`，在 Mihomo 表达为 `xtls-rprx-vision`。XHTTP TLS ALPN 为 h2,http/1.1，WS 为 http/1.1；stream-one 仍实际使用 h2，不声称能够透明回退到 HTTP/1.1。REALITY 不添加内核不支持的 ALPN 字段。
+
+锁定的 Mihomo 在 REALITY 节点中显式设置 `reality-opts.support-x25519mlkem768: true`，保留其指纹中的混合密钥交换参数；否则锁定 Xray 的 REALITY 认证失败。该字段为 Mihomo 支持的客户端参数，不写入 Xray 配置。隔离验收同时观察真实 ClientHello 的 ALPN 与 key_share。
+
+TCP 网页可达不能证明 UDP/QUIC 可用。隔离验收需覆盖两个锁定内核的三种传输、UDP DNS、多包 echo 和强制 HTTP/3，关闭隧道后相同请求必须失败。测试路由仅作用于独立客户端命名空间，不能修改服务器默认出口。
+
+### 上游依据
 
 - [Cloudflare DNS 列表 API](https://developers.cloudflare.com/api/resources/dns/subresources/records/methods/list/)、[PATCH API](https://developers.cloudflare.com/api/resources/dns/subresources/records/methods/edit/)
 - [Let's Encrypt shortlived profiles](https://letsencrypt.org/docs/profiles/)、[IP 证书可用性](https://letsencrypt.org/2026/01/15/6day-and-ip-general-availability)
 - [acme.sh profile 选择](https://github.com/acmesh-official/acme.sh/wiki/Profile-selection)
+- [Mihomo REALITY 实现（锁定版本）](https://github.com/MetaCubeX/mihomo/blob/v1.19.32/component/tls/reality.go)
 
 本轮实施与实际验收记录在 [实施计划](defect/04-native-deployment-plan.md) 和 [验收报告](defect/06-native-deployment-acceptance.md) 中；文档能力描述不等于生产已执行。

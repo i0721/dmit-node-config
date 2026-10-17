@@ -12,6 +12,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum ClientFormat {
+    Xray,
+    Mihomo,
+    All,
+}
+
 pub fn digest(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
@@ -189,20 +196,30 @@ impl Store {
             "Manifest digest does not match release ID"
         );
         let manifest: Manifest = serde_json::from_slice(&manifest_bytes)?;
+        let legacy = manifest.template_version == "1"
+            && ["0.1.0", "0.2.0"].contains(&manifest.generator_version.as_str());
         ensure!(
             manifest.schema_version == 1
-                && manifest.template_version == render::TEMPLATE_VERSION
-                // v0.1.0 uses the same schema/templates and is re-rendered below.
-                && [env!("CARGO_PKG_VERSION"), "0.1.0"].contains(&manifest.generator_version.as_str()),
+                && (legacy
+                    || (manifest.template_version == render::TEMPLATE_VERSION
+                        && ["0.3.0", "0.3.1"].contains(&manifest.generator_version.as_str()))),
             "Release requires its original nodectl/template version"
         );
         check_private(&path.join("source"), true)?;
         let (c, s) = config::load(&path.join("source"))?;
         ensure!(
+            !legacy || (c.vless.is_none() && s.vless.is_none()),
+            "Legacy release contains unsupported encryption fields"
+        );
+        ensure!(
             manifest.input_digest == digest(&serde_json::to_vec(&(&c, &s))?),
             "Source digest mismatch"
         );
-        let expected = render::files(&c, &s)?;
+        let expected = if legacy {
+            crate::render_legacy::files(&c, &s)?
+        } else {
+            render::files(&c, &s)?
+        };
         ensure!(
             manifest.files.len() == expected.len(),
             "Unexpected release file list"
@@ -321,15 +338,35 @@ impl Store {
         Ok(output)
     }
     pub fn export(&self, output: &Path) -> Result<()> {
+        self.export_format(output, ClientFormat::Xray)
+    }
+    pub fn export_format(&self, output: &Path, format: ClientFormat) -> Result<()> {
         let current = self
             .pointer("current")?
             .context("No successful applied release; candidate exports are unavailable")?;
-        self.verify(&current)?;
+        let (c, s) = self.verify(&current)?;
         private_dir(output)?;
-        atomic_write(
-            &output.join("profiles.json"),
-            &fs::read(self.release(&current)?.join("clients/profiles.json"))?,
-        )
+        if matches!(format, ClientFormat::Xray | ClientFormat::All) {
+            atomic_write(
+                &output.join("profiles.json"),
+                &fs::read(self.release(&current)?.join("clients/profiles.json"))?,
+            )?;
+        }
+        if matches!(format, ClientFormat::Mihomo | ClientFormat::All) {
+            atomic_write(&output.join("proxies.yaml"), &render::mihomo(&c, &s)?)?;
+            let profiles = render::profiles(&c, &s)?;
+            let weights: Vec<_> = profiles["profiles"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|p| serde_json::json!({"name":p["name"],"weight":p["weight"]}))
+                .collect();
+            atomic_write(
+                &output.join("weights.json"),
+                &serde_json::to_vec_pretty(&weights)?,
+            )?;
+        }
+        Ok(())
     }
     pub fn prune(&self) -> Result<()> {
         // Only prune previously successful versions, always keeping both pointers.

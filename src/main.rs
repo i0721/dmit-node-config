@@ -6,6 +6,8 @@ mod dns;
 mod host;
 mod provision;
 mod render;
+#[allow(dead_code)]
+mod render_legacy;
 mod setup;
 mod store;
 #[cfg(test)]
@@ -87,12 +89,20 @@ enum Action {
     Apply {
         release: String,
     },
-    Rollback,
+    Rollback {
+        #[arg(long)]
+        token_file: Option<PathBuf>,
+    },
     /// Restore an interrupted deployment from its protected transaction journal.
-    Recover,
+    Recover {
+        #[arg(long)]
+        token_file: Option<PathBuf>,
+    },
     ExportClients {
         #[arg(long)]
         output: PathBuf,
+        #[arg(long, value_enum, default_value = "xray")]
+        format: store::ClientFormat,
     },
     /// Explicitly back up existing unmanaged entrypoints for a later apply.
     Takeover {
@@ -171,24 +181,31 @@ fn run() -> Result<()> {
             host::apply(&store, &release)?;
             println!("Applied {release}; services and all three handshakes passed.");
         }
-        Action::Rollback => {
+        Action::Rollback { token_file } => {
             let _guard = store.lock()?;
+            let _lease = provision::Lease::hold(&_guard);
+            if deploy::rollback(&store, token_file.as_deref())? {
+                return Ok(());
+            }
             let release = store
                 .pointer("previous")?
                 .ok_or_else(|| anyhow::anyhow!("No previous successful release"))?;
             host::apply(&store, &release)?;
             println!("Rolled back to {release}.");
         }
-        Action::ExportClients { output } => {
+        Action::ExportClients { output, format } => {
             let _guard = store.lock()?;
-            store.export(&output)?;
+            match format {
+                store::ClientFormat::Xray => store.export(&output)?,
+                other => store.export_format(&output, other)?,
+            };
             println!("Exported current successful client profiles.");
         }
-        Action::Recover => {
+        Action::Recover { token_file } => {
             let _guard = store.recovery_lock()?;
             let _lease = provision::Lease::hold(&_guard);
             if store.state_dir.join("deployment.json").exists() {
-                deploy::recover(&store)?;
+                deploy::recover(&store, token_file.as_deref())?;
             } else {
                 host::recover(&store)?;
             }

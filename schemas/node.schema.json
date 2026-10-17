@@ -37,6 +37,16 @@
     "transport": {
       "$ref": "#/definitions/Transport"
     },
+    "vless": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/Vless"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "warp": {
       "$ref": "#/definitions/Warp"
     },
@@ -239,6 +249,18 @@
         },
         "xhttp": {
           "$ref": "#/definitions/Xhttp"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Vless": {
+      "type": "object",
+      "required": [
+        "encryption"
+      ],
+      "properties": {
+        "encryption": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false

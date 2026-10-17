@@ -10,3 +10,4 @@ printf 'deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] https://ng
 apt-get update
 apt-get install -y nginx
 /integration-target/debug/repo-tools download-xray /usr/local/bin/xray
+/integration-target/debug/repo-tools download-mihomo /usr/local/bin/mihomo
