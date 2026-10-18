@@ -244,7 +244,7 @@ impl Policy {
                 })
         })
     }
-    fn reconcile(&self, phase: Phase) -> Result<()> {
+    pub(crate) fn reconcile(&self, phase: Phase) -> Result<()> {
         self.validate()?;
         let dir = Path::new("/run/nodectl-cn-policy");
         store::private_dir(dir)?;

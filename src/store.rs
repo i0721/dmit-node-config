@@ -222,7 +222,7 @@ impl Store {
                     || v2
                     || v3
                     || (manifest.template_version == render::TEMPLATE_VERSION
-                        && manifest.generator_version == "0.5.0")),
+                        && ["0.5.0", "0.5.1"].contains(&manifest.generator_version.as_str()))),
             "Release requires its original nodectl/template version"
         );
         check_private(&path.join("source"), true)?;

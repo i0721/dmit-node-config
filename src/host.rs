@@ -1624,8 +1624,8 @@ fn restore(store: &Store, tx: &Transaction) -> Result<()> {
     );
     let mut errors = vec![];
     let mut attempt = |label: &str, result: Result<()>| {
-        if result.is_err() {
-            errors.push(label.to_owned());
+        if let Err(error) = result {
+            errors.push(format!("{label}: {error:#}"));
         }
     };
     if let Some(sharing) = &tx.sharing {

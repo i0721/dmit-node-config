@@ -457,6 +457,24 @@ fn fingerprint(path: &Path) -> Result<Value> {
         Err(e) => Err(e.into()),
     }
 }
+fn feature_entry_paths(c: &Config) -> Vec<PathBuf> {
+    let mut paths = vec![];
+    if c.routes_cn() {
+        paths.extend([
+            "/etc/systemd/system/usque-cn.service",
+            "/etc/xray/geoip.dat",
+            "/etc/xray/geosite.dat",
+        ]);
+    }
+    if c.serves_web() {
+        paths.extend([
+            "/etc/systemd/system/librespeed.service",
+            "/etc/systemd/system/openlist.service",
+            "/var/www/nodectl-services/current",
+        ]);
+    }
+    paths.into_iter().map(PathBuf::from).collect()
+}
 fn backup_paths(store: &Store, c: &Config) -> Vec<PathBuf> {
     let mut paths = vec![
         store.config_dir.clone(),
@@ -493,6 +511,7 @@ fn backup_paths(store: &Store, c: &Config) -> Vec<PathBuf> {
             PathBuf::from(&web.openlist_data_dir),
         ]);
     }
+    paths.extend(feature_entry_paths(c));
     paths.sort();
     paths.dedup();
     paths
@@ -660,6 +679,8 @@ struct Journal {
     previous: Option<String>,
     reference: host::Reference,
     files: Vec<Backup>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    feature_entry_backups: Option<bool>,
     dns_zone: Option<String>,
     dns: Vec<(Change, Value)>,
     pending_dns: Option<Change>,
@@ -702,6 +723,14 @@ fn restore_service_states(services: &BTreeMap<String, host::Service>) -> Result<
         }
         let current = host::service_state(name)?;
         if current.enabled != expected.enabled {
+            let entry = Path::new("/etc/systemd/system").join(format!("{name}.service"));
+            // Disabling an externally linked unit also removes its entrypoint.
+            // Preserve the already restored link when the original state was
+            // linked but not enabled; never invent an unrecorded unit target.
+            let original_link = (expected.enabled == "linked")
+                .then(|| fs::read_link(&entry))
+                .transpose()
+                .context("Original linked service entrypoint is missing")?;
             if current.enabled == "enabled-runtime" {
                 host::command("systemctl", &["disable", "--runtime", name])?;
             } else if current.enabled == "enabled" {
@@ -713,6 +742,10 @@ fn restore_service_states(services: &BTreeMap<String, host::Service>) -> Result<
                 }
                 "enabled-runtime" => {
                     host::command("systemctl", &["enable", "--runtime", name])?;
+                }
+                "linked" => {
+                    store::replace_link(original_link.as_ref().unwrap(), &entry)?;
+                    host::command("systemctl", &["daemon-reload"])?;
                 }
                 _ => {}
             }
@@ -764,6 +797,23 @@ fn same_native_routes(
         Ok(before == after)
     }
 }
+// Older managed installations can lack installation.json. The outer journal
+// still proves whether this deployment introduced the owned CN policy. Once
+// the original services are restored, remove only that newly owned policy;
+// otherwise its rejecting defaults would prevent the final exact route check.
+fn release_new_cn_policy(
+    policy: Option<&crate::cn_route::Policy>,
+    routes4: &str,
+    routes6: &str,
+) -> Result<()> {
+    if let Some(policy) = policy
+        && policy.without_routes(routes4)? == routes4
+        && policy.without_routes(routes6)? == routes6
+    {
+        policy.release()?;
+    }
+    Ok(())
+}
 fn save(store: &Store, journal: &Journal) -> Result<()> {
     store::atomic_write(
         &store.state_dir.join("deployment.json"),
@@ -780,6 +830,16 @@ fn save_phase(store: &Store, journal: &Journal, phase: &str) -> Result<()> {
 }
 fn recovery_paths(store: &Store, journal: &Journal) -> Result<Vec<PathBuf>> {
     let mut paths = backup_paths(store, &journal.config);
+    // Keep historical journals' exact backup lists. New journals explicitly
+    // record the added entrypoint coverage; never infer or relax their hashes.
+    match journal.feature_entry_backups {
+        Some(true) => ensure!(
+            journal.config.routes_cn() || journal.config.serves_web(),
+            "Feature entrypoint backups without enabled features"
+        ),
+        None => paths.retain(|p| !feature_entry_paths(&journal.config).contains(p)),
+        Some(false) => bail!("Invalid feature entrypoint backup marker"),
+    }
     match journal.schema_version {
         1 => {
             ensure!(
@@ -1202,6 +1262,7 @@ pub fn run(store: &Store, mut args: Deploy) -> Result<()> {
         previous: store.pointer("current")?,
         reference,
         files: vec![],
+        feature_entry_backups: (c.routes_cn() || c.serves_web()).then_some(true),
         dns_zone: args.dns_zone.clone(),
         dns: vec![],
         pending_dns: None,
@@ -1622,6 +1683,12 @@ fn restore(store: &Store, journal: &Journal, cf: Option<&Cloudflare>) -> Result<
             );
         }
     }
+    // Stop the newly managed tunnel while its unit and stop hook still exist.
+    // Removing the unit first can leave an active process with LoadState=not-found,
+    // so the inner recovery cannot reliably stop it or restore its old state.
+    if journal.config.routes_cn() {
+        host::stop_service("usque-cn")?;
+    }
     if journal.schema_version == 3 {
         crate::web_services::begin_maintenance(store, &journal.backup)?;
         for name in ["xray", "nginx", "openlist", "librespeed"] {
@@ -1749,6 +1816,11 @@ fn restore(store: &Store, journal: &Journal, cf: Option<&Cloudflare>) -> Result<
         cf.context("DNS recovery requires Cloudflare token")?
             .restore(change, record)?;
     }
+    release_new_cn_policy(
+        journal.cn_policy.as_ref(),
+        &journal.routes4,
+        &journal.routes6,
+    )?;
     ensure!(
         journal.routes4 == host::default_routes(false)?
             && journal.routes6 == host::default_routes(true)?,
@@ -1841,6 +1913,42 @@ pub fn rollback(store: &Store, token_file: Option<&Path>) -> Result<bool> {
 mod tests {
     use super::*;
     use clap::Parser;
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "Requires explicit fresh mount/network namespaces and private /run"]
+    fn kernel_restore_releases_only_new_cn_policy_without_installation_baseline() {
+        assert_eq!(
+            std::env::var("NODECTL_CN_POLICY_TEST").as_deref(),
+            Ok("isolated")
+        );
+        for namespace in ["net", "mnt"] {
+            assert_ne!(
+                fs::read_link(format!("/proc/self/ns/{namespace}")).unwrap(),
+                fs::read_link(format!("/proc/1/ns/{namespace}")).unwrap()
+            );
+        }
+        let links: Vec<Value> =
+            serde_json::from_str(&host::command("ip", &["-j", "link", "show"]).unwrap()).unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0]["ifname"], "lo");
+        let policy = crate::cn_route::Policy::from(&config::CnWarp::managed(true));
+        let before4 = host::default_routes(false).unwrap();
+        let before6 = host::default_routes(true).unwrap();
+        policy.reconcile(crate::cn_route::Phase::Prepare).unwrap();
+        let existing4 = host::default_routes(false).unwrap();
+        let existing6 = host::default_routes(true).unwrap();
+        release_new_cn_policy(Some(&policy), &existing4, &existing6).unwrap();
+        assert!(
+            policy.guarded().unwrap(),
+            "An existing policy must survive restore"
+        );
+        release_new_cn_policy(Some(&policy), &before4, &before6).unwrap();
+        assert!(!policy.inspect().unwrap());
+        assert_eq!(before4, host::default_routes(false).unwrap());
+        assert_eq!(before6, host::default_routes(true).unwrap());
+        release_new_cn_policy(Some(&policy), &before4, &before6).unwrap();
+        println!("LEGACY_RESTORE_RELEASES_ONLY_NEW_CN_POLICY_AND_REMAINS_IDEMPOTENT_PASS");
+    }
     #[derive(Parser)]
     struct Cli {
         #[command(flatten)]
@@ -2041,6 +2149,15 @@ mod tests {
         assert!(!recovery_paths(&store, &journal).unwrap().contains(&page));
         journal.schema_version = 2;
         assert!(recovery_paths(&store, &journal).unwrap().contains(&page));
+        journal.config.cn_warp = Some(config::CnWarp::managed(true));
+        let geoip = PathBuf::from("/etc/xray/geoip.dat");
+        assert!(!recovery_paths(&store, &journal).unwrap().contains(&geoip));
+        journal.feature_entry_backups = Some(true);
+        assert!(recovery_paths(&store, &journal).unwrap().contains(&geoip));
+        journal.feature_entry_backups = Some(false);
+        assert!(recovery_paths(&store, &journal).is_err());
+        journal.feature_entry_backups = None;
+        journal.config.cn_warp = None;
         journal.schema_version = 1;
         journal.config.vless = Some(config::Vless { encryption: true });
         assert!(recovery_paths(&store, &journal).is_err());

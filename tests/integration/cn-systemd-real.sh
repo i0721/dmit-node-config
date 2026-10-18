@@ -4,7 +4,7 @@
 set -euo pipefail
 test -f /.dockerenv
 test "${NODECTL_REAL_WARP_TEST:-}" = authorized-two-existing-devices
-test "$(nodectl --version)" = 'nodectl 0.5.0'
+test "$(nodectl --version)" = 'nodectl 0.5.1'
 test ! -e /var/lib/dmit-node/current
 test ! -e /run/nodectl-cn-policy/owner.json
 umask 077
