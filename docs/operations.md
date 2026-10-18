@@ -18,8 +18,8 @@ status 汇总当前/上一版本、服务、收据、24 小时证书门槛和中
 ## 工具升级及回退
 
 ```sh
-nodectl upgrade --version v0.3.1
-sudo nodectl upgrade --version v0.3.1 --execute
+nodectl upgrade --version v0.4.0
+sudo nodectl upgrade --version v0.4.0 --execute
 ```
 
 升级沿用精确版本签名安装器，先验证已有输入兼容性，失败不替换旧程序。不升级代理依赖、不重启服务。此命令只更新程序；完整向导还会审阅并执行部署计划。旧二进制按摘要保存在 `/usr/local/lib/nodectl/versions/`，回退先核对摘要，用同目录临时文件与原子替换恢复，再用原版本管理对应快照。
