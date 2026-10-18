@@ -44,6 +44,7 @@ bash dmitserverconfig-setup.sh
 | 固定版本、工具安装、离线资产和验签 | [安装与发行](docs/installation.md) |
 | DNS、证书、接管与自动恢复细节 | [交互部署](docs/automated-deployment.md) |
 | 客户端、续期、备份与恢复 | [日常运维](docs/operations.md) |
+| 节点页面、订阅与 Token（0.4.0 源码已验收，未发布） | [安全节点分发](docs/node-access.md) |
 | 手动分层操作与字段 | [高级部署参考](docs/deployment.md)、[配置说明](docs/configuration.md) |
 | 图解与故障定位 | [脱敏 DNS 图解](docs/cloudflare-screenshots.md)、[排错](docs/troubleshooting.md) |
 | 实现与贡献 | [架构](docs/architecture.md)、[安全](docs/security.md)、[贡献](CONTRIBUTING.md) |

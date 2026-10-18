@@ -20,6 +20,8 @@ if ! nodectl apply "$first"; then
 fi
 nodectl doctor
 nodectl export-clients --format all --output /root/nodectl-test/clients >/dev/null
+bash tests/integration/sharing.sh
+bash tests/integration/sharing-provider.sh
 test -f /var/lib/dmit-node/installation.json
 test "$(stat -c '%U:%G:%a' /tmp/vless-xhttp.socket)" = xray:www-data:660
 curl --fail --silent --http2 --resolve node.integration.test:443:127.0.0.1 https://node.integration.test/ | grep -q integration-ready
@@ -35,7 +37,7 @@ fi
 sed -i 's/alt_svc_max_age = 86400/alt_svc_max_age = 3600/' /etc/dmit-node/node.toml
 next=$(nodectl render)
 check "$next"
-for stage in entry-0 entry-1 entry-2 entry-3 entry-4 daemon-reload xray nginx services health; do
+for stage in entry-0 entry-1 entry-2 entry-3 entry-4 daemon-reload sharing xray nginx services health; do
   if NODECTL_FAILPOINT="$stage" nodectl apply "$next" >/root/nodectl-test/fault.log 2>&1; then echo "Fault not injected: $stage" >&2; exit 1; fi
   grep -q "Injected integration failure: $stage" /root/nodectl-test/fault.log || { cat /root/nodectl-test/fault.log; exit 1; }
   test "$(basename "$(readlink /var/lib/dmit-node/current)")" = "$first"
@@ -56,7 +58,9 @@ nodectl recover
 nodectl apply "$first" >/dev/null
 echo 'RECOVERY_FAILURE_RETRY_PASS'
 nodectl apply "$next"
+bash tests/integration/sharing.sh verify "$next"
 nodectl rollback
+bash tests/integration/sharing.sh verify "$first"
 test "$(basename "$(readlink /var/lib/dmit-node/current)")" = "$first"
 if NODECTL_FAILPOINT=uninstall-journal nodectl uninstall --execute >/root/nodectl-test/uninstall-fault.log 2>&1; then exit 1; fi
 test -f /var/lib/dmit-node/uninstall.json
@@ -191,7 +195,7 @@ echo 'AUTOMATED_PREVIEW_APPROVAL_IDENTITY_UPGRADE_FAILURE_RECOVERY_PASS'
 # Exercise the actual terminal path: cancel after review, then deploy and export
 # in one session without retyping a digest or persisting preview credentials.
 wizard='nodectl deploy --wizard --skip-dependencies --manual-certificates --takeover --probe-url https://127.0.0.1:9443/'
-answers() { printf '\n\n\n\n\n\n\n\n\nmanual\n\n\n%s\n' "$1"; }
+answers() { printf '\n\n\n\n\n\n\n\n\nfalse\nmanual\n\n\n%s\n' "$1"; }
 before=$(sha256sum /etc/dmit-node/node.toml /etc/dmit-node/secrets.json)
 if answers no | script -q -e -c "$wizard" /root/nodectl-test/wizard-cancel.log >/dev/null; then exit 1; fi
 grep -q 'Deployment cancelled' /root/nodectl-test/wizard-cancel.log

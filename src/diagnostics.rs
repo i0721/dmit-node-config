@@ -307,7 +307,7 @@ pub fn doctor(store: &Store, as_json: bool) -> Result<()> {
 
 pub fn status(store: &Store, as_json: bool) -> Result<()> {
     let mut services = std::collections::BTreeMap::new();
-    for name in ["nginx", "xray", "usque-warp"] {
+    for name in ["nginx", "xray", "usque-warp", "nodectl-share"] {
         let state = host::command("systemctl", &["show", name, "-p", "ActiveState", "--value"])
             .map(|v| v.trim().to_owned())
             .unwrap_or_else(|_| "unavailable".into());
@@ -316,6 +316,10 @@ pub fn status(store: &Store, as_json: bool) -> Result<()> {
     let current = store.pointer("current");
     let current_valid = current.is_ok();
     let current = current.ok().flatten();
+    let distribution_enabled = current
+        .as_ref()
+        .and_then(|id| store.verify(id).ok())
+        .is_some_and(|(c, _)| c.distributes());
     let previous = store.pointer("previous").ok().flatten();
     let checked = current
         .as_ref()
@@ -334,7 +338,7 @@ pub fn status(store: &Store, as_json: bool) -> Result<()> {
         "previous":previous,"pending_transaction":store.state_dir.join("transaction.json").exists(),
         "pending_uninstall":store.state_dir.join("uninstall.json").exists(),
         "pending_provisioning":store.state_dir.join("deployment.json").exists(),
-        "check_receipt_present":checked,"last_check_unix_seconds":checked_at,"certificates_valid_24h":certs,"services":services});
+        "check_receipt_present":checked,"last_check_unix_seconds":checked_at,"certificates_valid_24h":certs,"services":services,"distribution_enabled":distribution_enabled,"distribution_access":crate::share::access_status(store)});
     if as_json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {

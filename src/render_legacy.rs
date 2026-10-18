@@ -296,7 +296,7 @@ pub fn files(c: &Config, s: &Secrets) -> Result<BTreeMap<String, Vec<u8>>> {
         ("source/secrets.json".into(), serde_json::to_vec_pretty(s)?),
     ]);
     for (name, source) in [
-        ("nginx.conf", include_str!("../templates/nginx.conf.tpl")),
+        ("nginx.conf", include_str!("../templates/nginx.v2.conf.tpl")),
         (
             "systemd/xray.service",
             include_str!("../templates/xray.service.tpl"),

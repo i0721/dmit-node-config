@@ -12,6 +12,7 @@ fn fixture() -> (Config, Secrets) {
         {
             let mut c: Config = toml::from_str(config::EXAMPLE).unwrap();
             c.vless = None;
+            c.distribution = None;
             c
         },
         Secrets {
@@ -24,7 +25,7 @@ fn fixture() -> (Config, Secrets) {
         },
     )
 }
-fn sandbox() -> (tempfile::TempDir, Store) {
+pub(crate) fn sandbox() -> (tempfile::TempDir, Store) {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path().join("config"), tmp.path().join("state")).unwrap();
     store::private_dir(&store.config_dir).unwrap();
@@ -103,9 +104,21 @@ fn template_two_explicit_versions_preserve_strict_snapshot_integrity() {
         let (_tmp, store) = sandbox();
         let id = store.render().unwrap();
         let path = store.release(&id).unwrap();
+        let (c, s) = store.inputs().unwrap();
+        let v2 = crate::render_v2::files(&c, &s).unwrap();
+        for (name, data) in &v2 {
+            store::atomic_write(&path.join(name), data).unwrap();
+        }
         let mut manifest: Value =
             serde_json::from_slice(&fs::read(path.join("manifest.json")).unwrap()).unwrap();
         manifest["generator_version"] = json!(version);
+        manifest["template_version"] = json!("2");
+        manifest["files"] = serde_json::to_value(
+            v2.iter()
+                .map(|(name, data)| (name, store::digest(data)))
+                .collect::<BTreeMap<_, _>>(),
+        )
+        .unwrap();
         let bytes = serde_json::to_vec_pretty(&manifest).unwrap();
         let next = store::digest(&bytes)[..32].to_owned();
         store::atomic_write(&path.join("manifest.json"), &bytes).unwrap();
@@ -140,6 +153,22 @@ fn rejects_unknown_fields_at_every_level() {
     let mut value = serde_json::to_value(s).unwrap();
     value["typo"] = json!(true);
     assert!(serde_json::from_value::<Secrets>(value).is_err());
+}
+
+#[test]
+fn legacy_init_never_enables_distribution_and_its_route_cannot_overlap() {
+    for vless in [None, Some(config::Vless { encryption: false })] {
+        let (_tmp, store) = sandbox();
+        let (mut c, s) = store.inputs().unwrap();
+        c.vless = vless;
+        save(&store, &c, &s);
+        config::init(&store.config_dir, None, &[]).unwrap();
+        assert!(store.inputs().unwrap().0.distribution.is_none());
+        c.distribution = Some(config::Distribution { enabled: true });
+        config::validate(&c, &s).unwrap();
+        c.transport.xhttp.path = "/nodes/stream/".into();
+        assert!(config::validate(&c, &s).is_err());
+    }
 }
 
 #[test]

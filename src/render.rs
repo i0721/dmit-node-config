@@ -3,7 +3,7 @@ use anyhow::{Result, ensure};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-pub const TEMPLATE_VERSION: &str = "2";
+pub const TEMPLATE_VERSION: &str = "3";
 
 pub fn template(source: &str, vars: &BTreeMap<&str, String>) -> Result<String> {
     let mut env = minijinja::Environment::new();
@@ -268,6 +268,65 @@ pub fn files(c: &Config, s: &Secrets) -> Result<BTreeMap<String, Vec<u8>>> {
         ("WS_PATH", c.transport.ws.path.clone()),
         ("XHTTP_SOCKET", c.transport.xhttp.socket.clone()),
         ("WS_SOCKET", c.transport.ws.socket.clone()),
+        (
+            "SHARE_LOG_FORMAT",
+            if c.distribution.is_some() {
+                "log_format node_safe '$remote_addr [$time_local] \"$request_method $uri\" $status $body_bytes_sent';".into()
+            } else {
+                String::new()
+            },
+        ),
+        (
+            "SHARE_LOG_TYPE",
+            if c.distribution.is_some() {
+                "node_safe".into()
+            } else {
+                String::new()
+            },
+        ),
+        (
+            "SHARE_HTTP",
+            if c.distribution.is_some() {
+                "error_log /dev/null;\n        location ^~ /nodes/ { access_log off; return 404; }"
+                    .into()
+            } else {
+                String::new()
+            },
+        ),
+        (
+            "SHARE_ERROR",
+            if c.distribution.is_some() {
+                "error_log /dev/null;".into()
+            } else {
+                String::new()
+            },
+        ),
+        (
+            "SHARE_LIMIT",
+            if c.distributes() {
+                "limit_req_zone $binary_remote_addr zone=node_distribution:1m rate=5r/s;\n    limit_conn_zone $binary_remote_addr zone=node_distribution_connections:1m;".into()
+            } else {
+                String::new()
+            },
+        ),
+        (
+            "SHARE_ROUTE",
+            if c.distributes() {
+                crate::share_http::nginx_route()
+            } else if c.distribution.is_some() {
+                "location ^~ /nodes/ { access_log off; return 404; }".into()
+            } else {
+                String::new()
+            },
+        ),
+        (
+            "SHARE_IP",
+            if c.distribution.is_some() {
+                "location ^~ /nodes/ { access_log off; return 404; }".into()
+            } else {
+                String::new()
+            },
+        ),
         ("XRAY_BINARY", c.runtime.xray_binary.clone()),
         ("NGINX_BINARY", c.runtime.nginx_binary.clone()),
         ("USQUE_BINARY", c.runtime.usque_binary.clone()),
@@ -314,6 +373,12 @@ pub fn files(c: &Config, s: &Secrets) -> Result<BTreeMap<String, Vec<u8>>> {
         ),
     ] {
         files.insert(name.into(), template(source, &vars)?.into_bytes());
+    }
+    if c.distribution.is_some() {
+        files.insert(
+            "systemd/nodectl-share.service".into(),
+            include_bytes!("../templates/nodectl-share.service.tpl").to_vec(),
+        );
     }
     Ok(files)
 }

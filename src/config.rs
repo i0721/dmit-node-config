@@ -28,8 +28,11 @@ model!(Config {
     clients: Clients,
     warp: Warp,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    vless: Option<Vless>
+    vless: Option<Vless>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    distribution: Option<Distribution>
 });
+model!(Distribution { enabled: bool });
 model!(Vless { encryption: bool });
 model!(Node { domain: String, aliases: Vec<String>, reality_domain: String, ipv4: String, ipv6: String });
 model!(Ports {
@@ -106,6 +109,9 @@ pub struct EncryptionSecrets {
     pub reality: EncryptionPair,
 }
 impl Config {
+    pub fn distributes(&self) -> bool {
+        self.distribution.as_ref().is_some_and(|d| d.enabled)
+    }
     pub fn encrypted(&self) -> bool {
         self.vless.as_ref().is_some_and(|v| v.encryption)
     }
@@ -239,6 +245,25 @@ impl Config {
 }
 
 pub fn validate(c: &Config, s: &Secrets) -> Result<()> {
+    if c.distribution.is_some() {
+        for path in [
+            &c.transport.xhttp.path,
+            &c.transport.ws.path,
+            &c.transport.reality.path,
+        ] {
+            ensure!(
+                !overlap(path, "/nodes/"),
+                "Distribution route overlaps a transport path"
+            );
+        }
+        ensure!(
+            !c.website
+                .reserved_paths
+                .iter()
+                .any(|p| overlap(p, "/nodes/")),
+            "Distribution route overlaps a reserved website path"
+        );
+    }
     if c.encrypted() {
         let keys = s.vless.as_ref().context(
             "VLESS Encryption keys missing; initialize them explicitly before rendering",
@@ -530,6 +555,9 @@ pub fn init(dir: &Path, example: Option<&Path>, rotate: &[String]) -> Result<()>
     // Re-running init must not silently enable encryption in a legacy deployment.
     if config_path.exists() && config.get("vless").is_none() {
         defaults.as_table_mut().unwrap().remove("vless");
+    }
+    if config_path.exists() && config.get("distribution").is_none() {
+        defaults.as_table_mut().unwrap().remove("distribution");
     }
     merge_missing(&mut config, &defaults);
     for field in rotate.iter().filter(|s| s.starts_with("transport.")) {

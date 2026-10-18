@@ -60,3 +60,6 @@ fingerprint_weights = { chrome = 5, ios = 2, firefox = 3, qq = 1 }
 enabled = true
 config_file = "/etc/usque/config.json"
 take_over_default_route = false
+
+[distribution]
+enabled = true

@@ -320,6 +320,7 @@ fn smoke(binary: &Path, work: &Path) -> Result<()> {
     }
     let mut legacy: toml::Value = toml::from_str(include_str!("../../config/node.example.toml"))?;
     legacy.as_table_mut().unwrap().remove("vless");
+    legacy.as_table_mut().unwrap().remove("distribution");
     fs::write(config.join("node.toml"), toml::to_string_pretty(&legacy)?)?;
     fs::write(
         config.join("secrets.json"),

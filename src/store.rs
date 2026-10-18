@@ -125,8 +125,23 @@ impl Store {
             options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
         }
         let file = options.open(path)?;
-        file.try_lock_exclusive()
-            .context("Another nodectl operation is running")?;
+        // A bounded wait lets administration acquire the exclusive lock between
+        // short subscription reads, without changing legacy fail-fast behavior.
+        let wait_for_readers = self.state_dir.join("distribution/access.json").exists();
+        let started = std::time::Instant::now();
+        loop {
+            match file.try_lock_exclusive() {
+                Ok(()) => break,
+                Err(error)
+                    if wait_for_readers
+                        && error.kind() == std::io::ErrorKind::WouldBlock
+                        && started.elapsed() < std::time::Duration::from_secs(4) =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                Err(error) => return Err(error).context("Another nodectl operation is running"),
+            }
+        }
         Ok(file)
     }
     pub fn inputs(&self) -> Result<(Config, Secrets)> {
@@ -198,15 +213,22 @@ impl Store {
         let manifest: Manifest = serde_json::from_slice(&manifest_bytes)?;
         let legacy = manifest.template_version == "1"
             && ["0.1.0", "0.2.0"].contains(&manifest.generator_version.as_str());
+        let v2 = manifest.template_version == "2"
+            && ["0.3.0", "0.3.1"].contains(&manifest.generator_version.as_str());
         ensure!(
             manifest.schema_version == 1
                 && (legacy
+                    || v2
                     || (manifest.template_version == render::TEMPLATE_VERSION
-                        && ["0.3.0", "0.3.1"].contains(&manifest.generator_version.as_str()))),
+                        && manifest.generator_version == "0.4.0")),
             "Release requires its original nodectl/template version"
         );
         check_private(&path.join("source"), true)?;
         let (c, s) = config::load(&path.join("source"))?;
+        ensure!(
+            !(legacy || v2) || c.distribution.is_none(),
+            "Legacy release contains unsupported distribution fields"
+        );
         ensure!(
             !legacy || (c.vless.is_none() && s.vless.is_none()),
             "Legacy release contains unsupported encryption fields"
@@ -217,6 +239,8 @@ impl Store {
         );
         let expected = if legacy {
             crate::render_legacy::files(&c, &s)?
+        } else if v2 {
+            crate::render_v2::files(&c, &s)?
         } else {
             render::files(&c, &s)?
         };

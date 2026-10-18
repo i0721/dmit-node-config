@@ -9,6 +9,7 @@
 | clap | 4.6.7 | MIT OR Apache-2.0 | [source](https://github.com/clap-rs/clap) |
 | fs2 | 0.4.3 | MIT/Apache-2.0 | [source](https://github.com/danburkert/fs2-rs) |
 | hex | 0.4.3 | MIT OR Apache-2.0 | [source](https://github.com/KokaKiwi/rust-hex) |
+| httparse | 1.10.1 | MIT OR Apache-2.0 | [source](https://github.com/seanmonstar/httparse) |
 | libc | 0.2.190 | MIT OR Apache-2.0 | [source](https://github.com/rust-lang/libc) |
 | minijinja | 2.24.0 | Apache-2.0 | [source](https://github.com/mitsuhiko/minijinja) |
 | rand | 0.8.8 | MIT OR Apache-2.0 | [source](https://github.com/rust-random/rand) |
@@ -21,6 +22,7 @@
 | serde_json | 1.0.154 | MIT OR Apache-2.0 | [source](https://github.com/serde-rs/json) |
 | sha2 | 0.10.9 | MIT OR Apache-2.0 | [source](https://github.com/RustCrypto/hashes) |
 | similar | 2.7.0 | Apache-2.0 | [source](https://github.com/mitsuhiko/similar) |
+| subtle | 2.6.1 | BSD-3-Clause | [source](https://github.com/dalek-cryptography/subtle) |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 | [source](https://github.com/Stebalien/tempfile) |
 | toml | 0.8.23 | MIT OR Apache-2.0 | [source](https://github.com/toml-rs/toml) |
 | uuid | 1.28.0 | Apache-2.0 OR MIT | [source](https://github.com/uuid-rs/uuid) |

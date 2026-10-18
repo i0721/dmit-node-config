@@ -16,3 +16,9 @@ schema_version 当前仅支持 1。`nodectl migrate` 校验 v1 后保持文件�
 ## VLESS 与兼容性
 
 新配置默认 `[vless] encryption = true`；旧配置缺少该节时保留旧协议解释，不通过 init 或升级偷偷启用。三种传输的 Encryption 参数分别生成并私密保存，render 和预览不生成或轮换。显式迁移会要求更新客户端。XHTTP TLS 使用 h2,http/1.1，WS 使用 http/1.1；stream-one 不承诺完整 HTTP/1.1 回退。客户端内核和 UDP/QUIC 兼容性以锁定版本验收为准。
+
+## 受保护节点分发（0.4.0 源码，未发布）
+
+新配置包含 `[distribution] enabled = true`，启用 `/nodes/` 页面与订阅。旧配置缺少该节时保持关闭，init 不补齐启用；部署向导明确询问，也可用 `deploy --distribution true|false`。启用时禁止该路径与传输路径或网站 reserved_paths 重叠。
+
+Token 独立保存在 state-dir/distribution/access.json，不进入 node.toml、secrets.json 或配置快照；回滚不恢复已撤销凭据。初始自定义值可在向导无回显输入或用 `--access-token-file`；已有凭据变更必须显式 `share rotate`。使用方式见 [节点访问](node-access.md)。该源码采用模板 3，模板 1/2 和原生成器的严格重生成校验继续保留。

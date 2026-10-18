@@ -8,7 +8,11 @@ mod provision;
 mod render;
 #[allow(dead_code)]
 mod render_legacy;
+#[allow(dead_code)]
+mod render_v2;
 mod setup;
+mod share;
+mod share_http;
 mod store;
 #[cfg(test)]
 mod tests;
@@ -45,6 +49,11 @@ enum Action {
     Setup(setup::Setup),
     /// Preview or run a DMIT deployment, preserving existing inputs and using apply transactions.
     Deploy(deploy::Deploy),
+    /// Manage protected node distribution credentials.
+    Share {
+        #[command(subcommand)]
+        action: share::Action,
+    },
     /// Validate schema compatibility; unsupported schemas are never rewritten.
     Migrate,
     /// Install a signed exact tool version; preview unless --execute is supplied.
@@ -129,6 +138,7 @@ fn run() -> Result<()> {
         Action::Status { json } => diagnostics::status(&store, json)?,
         Action::Setup(setup) => setup::run(&store, setup)?,
         Action::Deploy(deploy) => deploy::run(&store, deploy)?,
+        Action::Share { action } => share::run(&store, action)?,
         Action::Migrate => {
             let _guard = store.lock()?;
             diagnostics::migrate(&store)?;
@@ -180,6 +190,11 @@ fn run() -> Result<()> {
             let _guard = store.lock()?;
             host::apply(&store, &release)?;
             println!("Applied {release}; services and all three handshakes passed.");
+            if share::deployment_result(&store).is_err() {
+                eprintln!(
+                    "nodectl: deployment applied; inspect protected distribution credentials with nodectl share status"
+                );
+            }
         }
         Action::Rollback { token_file } => {
             let _guard = store.lock()?;

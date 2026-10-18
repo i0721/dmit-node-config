@@ -25,6 +25,7 @@ pub fn legacy_inputs(root: &Path) -> Result<()> {
         .as_table_mut()
         .context("Config table")?
         .remove("vless");
+    config.as_table_mut().unwrap().remove("distribution");
     fs::write(root.join("node.toml"), toml::to_string_pretty(&config)?)?;
     let mut secrets: Value = serde_json::from_slice(&fs::read(root.join("secrets.json"))?)?;
     secrets

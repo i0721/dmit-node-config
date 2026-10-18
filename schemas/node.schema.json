@@ -17,6 +17,16 @@
     "clients": {
       "$ref": "#/definitions/Clients"
     },
+    "distribution": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/Distribution"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "node": {
       "$ref": "#/definitions/Node"
     },
@@ -87,6 +97,18 @@
           "type": "integer",
           "format": "uint32",
           "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "Distribution": {
+      "type": "object",
+      "required": [
+        "enabled"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false

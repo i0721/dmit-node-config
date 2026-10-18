@@ -41,6 +41,12 @@ pub struct Deploy {
     /// Explicit encryption migration; existing configurations are never silently changed.
     #[arg(long, action=clap::ArgAction::Set)]
     pub vless_encryption: Option<bool>,
+    /// Enable protected node distribution; missing legacy fields remain disabled.
+    #[arg(long, action=clap::ArgAction::Set)]
+    pub distribution: Option<bool>,
+    /// Optional initial access token in an owner-only file; use share rotate later.
+    #[arg(long)]
+    pub access_token_file: Option<PathBuf>,
     #[arg(long)]
     pub ipv4: Option<String>,
     /// Empty string explicitly disables IPv6.
@@ -284,6 +290,11 @@ pub(crate) fn candidate(store: &Store, args: &Deploy) -> Result<(Config, Secrets
     if let Some(encryption) = args.vless_encryption {
         c.vless = Some(config::Vless { encryption });
     }
+    if let Some(enabled) = args.distribution
+        && (enabled || c.distribution.is_some())
+    {
+        c.distribution = Some(config::Distribution { enabled });
+    }
     if let Some(v) = args.http_port {
         c.ports.http = v;
     }
@@ -320,6 +331,16 @@ pub(crate) fn candidate(store: &Store, args: &Deploy) -> Result<(Config, Secrets
         c.ports.reality = prompt("REALITY port", &c.ports.reality.to_string())?.parse()?;
         c.warp.enabled =
             prompt("Independent WARP (true/false)", &c.warp.enabled.to_string())?.parse()?;
+        if args.wizard {
+            let enabled = prompt(
+                "Protected node page and subscriptions (true/false)",
+                &c.distributes().to_string(),
+            )?
+            .parse()?;
+            if enabled || c.distribution.is_some() {
+                c.distribution = Some(config::Distribution { enabled });
+            }
+        }
     }
     config::validate_preview(&c, &s)?;
     if exists {
@@ -413,6 +434,9 @@ fn backup_paths(store: &Store, c: &Config) -> Vec<PathBuf> {
         PathBuf::from("/var/spool/cron/crontabs/root"),
         Path::new(&c.website.root).join("index.html"),
     ];
+    if c.distribution.is_some() {
+        paths.push(PathBuf::from(host::SHARE_ENTRY));
+    }
     paths.sort();
     paths.dedup();
     paths
@@ -469,6 +493,10 @@ fn inventory(store: &Store, c: &Config) -> Result<Value> {
         c.runtime.nginx_binary.clone(),
         fingerprint(Path::new(&c.runtime.nginx_binary))?,
     );
+    files.insert(
+        crate::share::credential_path(store).display().to_string(),
+        fingerprint(&crate::share::credential_path(store))?,
+    );
     let mut binary_digests = BTreeMap::new();
     for path in [
         &c.runtime.xray_binary,
@@ -485,7 +513,10 @@ fn inventory(store: &Store, c: &Config) -> Result<Value> {
         );
     }
     let mut services = BTreeMap::new();
-    for service in host::SERVICES {
+    for service in host::SERVICES
+        .into_iter()
+        .chain(c.distribution.is_some().then_some(host::SHARE_SERVICE))
+    {
         services.insert(
             service,
             host::command(
@@ -633,6 +664,41 @@ pub fn run(store: &Store, mut args: Deploy) -> Result<()> {
         "Interrupted provisioning exists; run recover first"
     );
     let (c, mut s, exists) = candidate(store, &args)?;
+    let mut access_token = if let Some(path) = &args.access_token_file {
+        store::check_private(path, false)?;
+        ensure!(
+            fs::metadata(path)?.len() <= 128,
+            "Invalid access token file"
+        );
+        Some(fs::read_to_string(path)?.trim().to_owned())
+    } else {
+        None
+    };
+    if args.wizard
+        && c.distributes()
+        && !crate::share::credential_path(store).exists()
+        && access_token.is_none()
+        && prompt(
+            "Set an initial custom access token (true/false; otherwise generated securely)",
+            "false",
+        )?
+        .parse::<bool>()?
+    {
+        access_token = Some(secret_prompt(
+            "Initial access token (64 lowercase hex characters)",
+        )?);
+    }
+    if let Some(token) = &access_token {
+        ensure!(
+            c.distributes(),
+            "Enable distribution before setting an access token"
+        );
+        ensure!(
+            !crate::share::credential_path(store).exists(),
+            "Access credentials already exist; use nodectl share rotate explicitly"
+        );
+        crate::share::validate_custom(token)?;
+    }
     ensure!(
         config::abs_path(store.config_dir.to_str().context("Config path")?)
             && config::abs_path(store.state_dir.to_str().context("State path")?),
@@ -825,6 +891,8 @@ pub fn run(store: &Store, mut args: Deploy) -> Result<()> {
     plan["website_placeholder_replacement"] = json!(provision::website_change(&c)?);
     plan["generate_independent_vless_keys"] = json!(c.encrypted() && s.vless.is_none());
     plan["replace_domain_set"] = json!(args.replace_domain_set);
+    plan["distribution"] = json!({"enabled":c.distributes(),"initial_custom_token":access_token.is_some(),"initial_token_sha256":access_token.as_ref().map(|s| store::digest(s.as_bytes())),"credential_file":crate::share::credential_path(store),"page_path":"/nodes/","server_error_logging_suppressed":c.distribution.is_some()});
+    plan["distribution"]["revoke_access_when_disabled"] = json!(!c.distributes());
     if args.wizard {
         plan["export_client_formats"] = json!(["xray", "mihomo"]);
         plan["persist_cloudflare_credential"] = json!(cf.is_some());
@@ -926,6 +994,7 @@ pub fn run(store: &Store, mut args: Deploy) -> Result<()> {
         config_existed: exists,
         services: host::SERVICES
             .into_iter()
+            .chain(c.distribution.is_some().then_some(host::SHARE_SERVICE))
             .map(|name| Ok((name.to_owned(), host::service_state(name)?)))
             .collect::<Result<_>>()?,
         after_files: None,
@@ -1064,7 +1133,7 @@ pub fn run(store: &Store, mut args: Deploy) -> Result<()> {
         }
         journal.phase = "applying".into();
         save(store, &journal)?;
-        host::apply(store, &release)?;
+        host::apply_with_access_token(store, &release, access_token.as_deref())?;
         if preserve_clients {
             host::previous_clients(
                 store,
@@ -1119,6 +1188,11 @@ pub fn run(store: &Store, mut args: Deploy) -> Result<()> {
             "Deployment {release} completed; all three protocol handshakes passed. Backup: {}",
             backup.display()
         );
+        if crate::share::deployment_result(store).is_err() {
+            eprintln!(
+                "nodectl: deployment succeeded; inspect protected distribution credentials with nodectl share status"
+            );
+        }
         Ok(())
     })();
     if let Err(error) = result {
@@ -1153,7 +1227,10 @@ fn restore(store: &Store, journal: &Journal, cf: Option<&Cloudflare>) -> Result<
         );
     }
     ensure!(
-        journal.services.len() == host::SERVICES.len()
+        journal.services.len()
+            == host::SERVICES.len() + usize::from(journal.config.distribution.is_some())
+            && (journal.config.distribution.is_none()
+                || journal.services.contains_key(host::SHARE_SERVICE))
             && host::SERVICES
                 .iter()
                 .all(|name| journal.services.contains_key(*name)),
@@ -1275,7 +1352,7 @@ fn restore(store: &Store, journal: &Journal, cf: Option<&Cloudflare>) -> Result<
     }
     for (name, expected) in &journal.services {
         ensure!(
-            ["nginx", "xray", "usque-warp"].contains(&name.as_str()),
+            ["nginx", "xray", "usque-warp", host::SHARE_SERVICE].contains(&name.as_str()),
             "Unexpected recovery service"
         );
         let active = host::command("systemctl", &["show", name, "-p", "ActiveState", "--value"])?

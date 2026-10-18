@@ -384,6 +384,25 @@ fn preflight(store: &Store, id: &str, reference: &Reference) -> Result<(Config, 
     if c.warp.enabled {
         verify_units.push(path(&warp_unit)?);
     }
+    let share_unit = release.join(SHARE_SOURCE);
+    if c.distributes() {
+        ensure!(
+            crate::share::access_status(store) != "invalid",
+            "Distribution credential record is invalid; recover protected access material first"
+        );
+        trusted_binary(Path::new("/usr/local/bin/nodectl"))?;
+        ensure!(
+            store::file_digest(Path::new("/usr/local/bin/nodectl"))?
+                == store::file_digest(&std::env::current_exe()?)?,
+            "Distribution must use the exact installed nodectl executable"
+        );
+        ensure!(
+            command("/usr/local/bin/nodectl", &["--version"])?.trim()
+                == format!("nodectl {}", env!("CARGO_PKG_VERSION")),
+            "Distribution requires the current nodectl at its canonical installed path"
+        );
+        verify_units.push(path(&share_unit)?);
+    }
     command("systemd-analyze", &verify_units)?;
     if c.warp.enabled {
         trusted_binary(Path::new(&c.runtime.usque_binary))?;
@@ -441,6 +460,9 @@ pub(crate) const ENTRIES: [(&str, &str); 5] = [
     ),
 ];
 pub(crate) const SERVICES: [&str; 3] = ["xray", "nginx", "usque-warp"];
+pub(crate) const SHARE_ENTRY: &str = "/etc/systemd/system/nodectl-share.service";
+pub(crate) const SHARE_SERVICE: &str = "nodectl-share";
+const SHARE_SOURCE: &str = "systemd/nodectl-share.service";
 
 fn checkpoint(_name: &str) -> Result<()> {
     #[cfg(feature = "integration-test")]
@@ -483,9 +505,149 @@ struct Transaction {
     routes: String,
     routes6: String,
     backup: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sharing: Option<Sharing>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Sharing {
+    entry: Entry,
+    service: Service,
+    created_token: bool,
+}
+
+fn installation(store: &Store) -> Result<Option<Transaction>> {
+    let path = store.state_dir.join("installation.json");
+    if !path.exists() {
+        return Ok(None);
+    }
+    store::check_private(&path, false)?;
+    Ok(Some(serde_json::from_slice(&fs::read(path)?)?))
+}
+
+fn sharing_state(store: &Store, c: &Config, backup: &Path) -> Result<Option<Sharing>> {
+    if c.distribution.is_none()
+        && installation(store)?.is_none_or(|baseline| baseline.sharing.is_none())
+    {
+        return Ok(None);
+    }
+    Ok(Some(Sharing {
+        entry: entry(Path::new(SHARE_ENTRY), &backup.join("entry-sharing"))?,
+        service: service_state(SHARE_SERVICE)?,
+        created_token: c.distributes() && !crate::share::credential_path(store).exists(),
+    }))
+}
+
+fn extend_installation(store: &Store, tx: &Transaction) -> Result<()> {
+    let Some(sharing) = &tx.sharing else {
+        return Ok(());
+    };
+    let Some(mut baseline) = installation(store)? else {
+        return Ok(());
+    };
+    validate_transaction(store, &baseline)?;
+    if baseline.sharing.is_some() {
+        return Ok(());
+    }
+    let mut original = sharing.clone();
+    original.created_token = false;
+    if let Entry::File { backup, sha256, .. } = &mut original.entry {
+        ensure!(
+            store::file_digest(backup)? == *sha256,
+            "Sharing entry backup changed"
+        );
+        let target = baseline.backup.join("sharing-original");
+        ensure!(!target.exists(), "Sharing baseline backup already exists");
+        store::atomic_write(&target, &fs::read(&*backup)?)?;
+        *backup = target;
+    }
+    baseline.sharing = Some(original);
+    store::atomic_write(
+        &store.state_dir.join("installation.json"),
+        &serde_json::to_vec_pretty(&baseline)?,
+    )
+}
+
+fn restore_sharing(sharing: &Sharing) -> Result<()> {
+    let current = service_state(SHARE_SERVICE)?;
+    if current.active {
+        command("systemctl", &["stop", SHARE_SERVICE])?;
+    }
+    if current.enabled.starts_with("enabled") {
+        command("systemctl", &["disable", SHARE_SERVICE])?;
+    }
+    restore_entry(Path::new(SHARE_ENTRY), &sharing.entry)?;
+    command("systemctl", &["daemon-reload"])?;
+    if sharing.service.enabled == "enabled" {
+        command("systemctl", &["enable", SHARE_SERVICE])?;
+    }
+    if sharing.service.enabled == "enabled-runtime" {
+        command("systemctl", &["enable", "--runtime", SHARE_SERVICE])?;
+    }
+    if sharing.service.active {
+        command("systemctl", &["restart", SHARE_SERVICE])?;
+    }
+    let restored = service_state(SHARE_SERVICE)?;
+    ensure!(
+        restored.active == sharing.service.active && restored.enabled == sharing.service.enabled,
+        "Sharing service recovery failed"
+    );
+    Ok(())
+}
+
+fn activate_sharing(
+    store: &Store,
+    id: &str,
+    c: &Config,
+    tx: &Transaction,
+    access_token: Option<&str>,
+) -> Result<()> {
+    if tx.sharing.is_none() {
+        return Ok(());
+    }
+    if !c.distributes() {
+        // Legacy templates cannot redact subscription URLs. Invalidate their
+        // bearer before restoring such a listener; never resurrect it on error.
+        crate::share::revoke(store)?;
+    }
+    let source = store.release(id)?.join(SHARE_SOURCE);
+    if !source.exists() {
+        let baseline = installation(store)?.context("Missing sharing baseline")?;
+        return restore_sharing(
+            baseline
+                .sharing
+                .as_ref()
+                .context("Missing sharing baseline")?,
+        );
+    }
+    store::replace_link(&source, Path::new(SHARE_ENTRY))?;
+    command("systemctl", &["daemon-reload"])?;
+    if c.distributes() {
+        if !crate::share::credential_path(store).exists() {
+            crate::share::rotate(store, access_token.map(str::to_owned))?;
+        }
+        command("systemctl", &["enable", SHARE_SERVICE])?;
+        command("systemctl", &["restart", SHARE_SERVICE])?;
+        crate::share_http::health()?;
+    } else {
+        let state = service_state(SHARE_SERVICE)?;
+        if state.active {
+            command("systemctl", &["stop", SHARE_SERVICE])?;
+        }
+        if state.enabled.starts_with("enabled") {
+            command("systemctl", &["disable", SHARE_SERVICE])?;
+        }
+        store::replace_link(&source, Path::new(SHARE_ENTRY))?;
+        command("systemctl", &["daemon-reload"])?;
+    }
+    checkpoint("sharing")
 }
 
 fn entry(p: &Path, backup: &Path) -> Result<Entry> {
+    inspect_entry(p, Some(backup))
+}
+fn inspect_entry(p: &Path, backup: Option<&Path>) -> Result<Entry> {
     match fs::symlink_metadata(p) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Entry::Missing),
         Err(e) => Err(e.into()),
@@ -499,10 +661,12 @@ fn entry(p: &Path, backup: &Path) -> Result<Entry> {
                 p.display()
             );
             let (mode, uid, gid) = metadata(&m);
-            store::atomic_write(backup, &fs::read(p)?)?;
+            if let Some(backup) = backup {
+                store::atomic_write(backup, &fs::read(p)?)?;
+            }
             Ok(Entry::File {
                 sha256: store::file_digest(p)?,
-                backup: backup.into(),
+                backup: backup.unwrap_or_else(|| Path::new("")).into(),
                 mode,
                 uid,
                 gid,
@@ -556,6 +720,14 @@ pub fn takeover(store: &Store, id: &str) -> Result<()> {
             "{dest}\n  before: {old}\n  after: sha256:{next}\n"
         ));
         authorization.insert(dest.to_string(), e);
+    }
+    if store.release(id)?.join(SHARE_SOURCE).exists() {
+        let e = entry(Path::new(SHARE_ENTRY), &dir.join("backup-sharing"))?;
+        diff.push_str(&format!(
+            "{SHARE_ENTRY}\n  before: {}\n  after: managed distribution unit\n",
+            fingerprint(&e)
+        ));
+        authorization.insert(SHARE_ENTRY.into(), e);
     }
     store::atomic_write(
         &dir.join("entries.json"),
@@ -661,6 +833,14 @@ pub(crate) fn default_routes(ipv6: bool) -> Result<String> {
 }
 
 pub fn apply(store: &Store, id: &str) -> Result<()> {
+    apply_with_access_token(store, id, None)
+}
+
+pub(crate) fn apply_with_access_token(
+    store: &Store,
+    id: &str,
+    access_token: Option<&str>,
+) -> Result<()> {
     linux_root()?;
     store.release(id)?;
     let r = receipt(store, id)?;
@@ -675,6 +855,13 @@ pub fn apply(store: &Store, id: &str) -> Result<()> {
             );
         }
         health(&c, &s, &r.reference)?;
+        if c.distributes() {
+            ensure!(
+                fs::read_link(SHARE_ENTRY).ok() == Some(store.release(id)?.join(SHARE_SOURCE)),
+                "Distribution entrypoint drifted"
+            );
+            crate::share_http::health()?;
+        }
         return Ok(());
     }
     let backup = store
@@ -702,20 +889,46 @@ pub fn apply(store: &Store, id: &str) -> Result<()> {
         services,
         routes: default_routes(false)?,
         routes6: default_routes(true)?,
+        sharing: sharing_state(store, &c, &backup)?,
         backup,
     };
+    if let Some(sharing) = &tx.sharing {
+        let managed = tx.current.as_ref().is_some_and(|old| matches!(&sharing.entry, Entry::Link {target} if store.release(old).is_ok_and(|p| *target == p.join(SHARE_SOURCE))));
+        if !matches!(sharing.entry, Entry::Missing) && !managed {
+            let approvals = store
+                .state_dir
+                .join("takeover")
+                .join(id)
+                .join("entries.json");
+            store::check_private(&approvals, false)
+                .context("Unmanaged distribution service; explicit takeover is required")?;
+            let approved: BTreeMap<String, Entry> = serde_json::from_slice(&fs::read(approvals)?)?;
+            ensure!(
+                approved
+                    .get(SHARE_ENTRY)
+                    .is_some_and(|e| fingerprint(e) == fingerprint(&sharing.entry)),
+                "Distribution service changed after takeover"
+            );
+        }
+    }
     let journal = store.state_dir.join("transaction.json");
     // Keep the original host state across later applies and upgrades.
     if tx.current.is_none() {
+        let mut baseline = tx.clone();
+        if let Some(sharing) = &mut baseline.sharing {
+            sharing.created_token = false;
+        }
         store::atomic_write(
             &store.state_dir.join("installation.json"),
-            &serde_json::to_vec_pretty(&tx)?,
+            &serde_json::to_vec_pretty(&baseline)?,
         )?;
+    } else {
+        extend_installation(store, &tx)?;
     }
     store::atomic_write(&journal, &serde_json::to_vec_pretty(&tx)?)?;
     checkpoint("journal")?;
     transact(
-        || activate(store, id, &c, &s, &r, &tx),
+        || activate(store, id, &c, &s, &r, &tx, access_token),
         || restore(store, &tx),
         || {
             store::atomic_write(&store.state_dir.join("recovery-required.txt"),
@@ -768,6 +981,7 @@ fn activate(
     s: &Secrets,
     r: &Receipt,
     tx: &Transaction,
+    access_token: Option<&str>,
 ) -> Result<()> {
     let old = tx.current.as_deref();
     let old_c = old.map(|v| store.verify(v).map(|p| p.0)).transpose()?;
@@ -784,6 +998,7 @@ fn activate(
         command("systemctl", &["daemon-reload"])?;
     }
     checkpoint("daemon-reload")?;
+    activate_sharing(store, id, c, tx, access_token)?;
     let xray_changed =
         changed(store, id, old, "xray.json")? || changed(store, id, old, "systemd/xray.service")?;
     if xray_changed || !tx.services["xray"].active {
@@ -888,6 +1103,15 @@ fn restore(store: &Store, tx: &Transaction) -> Result<()> {
             errors.push(label.to_owned());
         }
     };
+    if let Some(sharing) = &tx.sharing {
+        attempt("restore distribution service", restore_sharing(sharing));
+        if sharing.created_token {
+            attempt(
+                "revoke interrupted initial distribution token",
+                crate::share::revoke(store),
+            );
+        }
+    }
     // Restore all components even when one recovery action fails.
     for name in SERVICES {
         let loaded = command("systemctl", &["show", name, "-p", "LoadState", "--value"]);
@@ -1219,7 +1443,11 @@ fn validate_transaction(store: &Store, tx: &Transaction) -> Result<()> {
             && SERVICES.iter().all(|s| tx.services.contains_key(*s)),
         "Unexpected transaction services"
     );
-    for entry in tx.entries.values() {
+    for entry in tx
+        .entries
+        .values()
+        .chain(tx.sharing.iter().map(|sharing| &sharing.entry))
+    {
         if let Entry::File { backup, sha256, .. } = entry {
             ensure!(
                 backup.parent() == Some(tx.backup.as_path()),
@@ -1254,6 +1482,22 @@ pub fn uninstall(store: &Store, execute: bool) -> Result<()> {
         );
         println!("Restore {dest} to {}", fingerprint(&baseline.entries[dest]));
     }
+    if let Some(sharing) = &baseline.sharing {
+        let source = store.release(&current)?.join(SHARE_SOURCE);
+        if source.exists() {
+            ensure!(
+                fs::read_link(SHARE_ENTRY).ok() == Some(source),
+                "Distribution entrypoint drifted"
+            );
+        } else {
+            let observed = inspect_entry(Path::new(SHARE_ENTRY), None)?;
+            ensure!(
+                fingerprint(&observed) == fingerprint(&sharing.entry),
+                "Restored distribution entrypoint drifted"
+            );
+        }
+        println!("Restore {SHARE_ENTRY} to {}", fingerprint(&sharing.entry));
+    }
     for (name, state) in &baseline.services {
         println!(
             "Restore service {name}: active={}, enabled={}",
@@ -1263,6 +1507,11 @@ pub fn uninstall(store: &Store, execute: bool) -> Result<()> {
     println!(
         "Retain certificates, WARP credentials, configuration, snapshots, backup records and nodectl executable."
     );
+    if baseline.sharing.is_some() {
+        println!(
+            "Revoke subscription access before restoring original listeners; a failed teardown may require share rotate to restore access."
+        );
+    }
     if !execute {
         println!("Preview only; rerun uninstall --execute.");
         return Ok(());
@@ -1282,7 +1531,7 @@ pub fn uninstall(store: &Store, execute: bool) -> Result<()> {
     }
     let rollback = Transaction {
         candidate: current.clone(),
-        current: Some(current),
+        current: Some(current.clone()),
         previous: store.pointer("previous")?,
         entries,
         services: SERVICES
@@ -1291,6 +1540,10 @@ pub fn uninstall(store: &Store, execute: bool) -> Result<()> {
             .collect::<Result<_>>()?,
         routes: default_routes(false)?,
         routes6: default_routes(true)?,
+        sharing: sharing_state(store, &store.verify(&current)?.0, &backup)?.map(|mut sharing| {
+            sharing.created_token = false;
+            sharing
+        }),
         backup,
     };
     // Network changes made since installation are not owned by uninstall.
@@ -1304,6 +1557,9 @@ pub fn uninstall(store: &Store, execute: bool) -> Result<()> {
         })?,
     )?;
     checkpoint("uninstall-journal")?;
+    if baseline.sharing.is_some() {
+        crate::share::revoke(store)?;
+    }
     let journal = store.state_dir.join("transaction.json");
     store::atomic_write(&journal, &serde_json::to_vec_pretty(&baseline)?)?;
     if restore(store, &baseline).is_err() {
@@ -1318,6 +1574,7 @@ pub fn uninstall(store: &Store, execute: bool) -> Result<()> {
     }
     checkpoint("uninstall-restored")?;
     fs::remove_file(pending)?;
+    crate::share::revoke(store)?;
     println!("Original entrypoints and service states restored and verified.");
     Ok(())
 }
@@ -1340,6 +1597,7 @@ pub fn recover(store: &Store) -> Result<()> {
     let journal = store.state_dir.join("transaction.json");
     store::check_private(&journal, false)?;
     let tx: Transaction = serde_json::from_slice(&fs::read(journal)?)?;
+    validate_transaction(store, &tx)?;
     ensure!(
         tx.backup.starts_with(store.state_dir.join("backups")),
         "Backup escapes state directory"

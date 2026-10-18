@@ -18,7 +18,9 @@ http {
         text/plain txt;
     }
     default_type application/octet-stream;
-    access_log {{ LOG_ROOT }}/nginx/access.log;
+    {{ SHARE_LOG_FORMAT }}
+    access_log {{ LOG_ROOT }}/nginx/access.log {{ SHARE_LOG_TYPE }};
+    {{ SHARE_LIMIT }}
     sendfile on;
     ssl_protocols TLSv1.3;
     http2 on;
@@ -26,12 +28,15 @@ http {
     server {
 {{ HTTP_LISTEN }}
         server_name _;
+        {{ SHARE_HTTP }}
         location ^~ /.well-known/acme-challenge/ { root /var/www/acme; }
         location / { return 301 https://$host{{ REDIRECT_PORT }}$request_uri; }
     }
     server {
 {{ DEFAULT_LISTEN }}
         server_name _;
+        {{ SHARE_ERROR }}
+        {{ SHARE_IP }}
         ssl_certificate {{ IP_CERT }}/fullchain.pem;
         ssl_certificate_key {{ IP_CERT }}/privkey.pem;
         {{ ALT_SVC }}
@@ -44,6 +49,8 @@ http {
     server {
 {{ DOMAIN_LISTEN }}
         server_name {{ DOMAINS }};
+        {{ SHARE_ERROR }}
+        {{ SHARE_ROUTE }}
         ssl_certificate {{ DOMAIN_CERT }}/fullchain.pem;
         ssl_certificate_key {{ DOMAIN_CERT }}/privkey.pem;
         {{ ALT_SVC }}

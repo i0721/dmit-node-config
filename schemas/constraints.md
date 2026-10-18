@@ -10,4 +10,5 @@ JSON Schema 由 `cargo run --locked -- schema` 生成；类型和未知字段由
 - 文件路径是绝对 Linux 路径，只允许字母、数字、下划线、横杠、斜杠和点。拒绝 systemd specifier、Nginx 变量及 shell 插值。UDS 路径不同且小于 100 字节。
 - 传输权重非负且总和 100；指纹只允许 chrome/ios/firefox/qq，总权重为 1–1000。
 - WARP take_over_default_route 只能为 false，不添加代理出站。
+- distribution 为可缺省节；缺省时不启用。启用时 `/nodes/` 不得与传输路由或网站保留路径重叠，分发凭据不属于配置快照。
 - 上线额外拒绝文档地址，核实证书、目录、用户访问和实际程序兼容性，并要求真实握手成功。
