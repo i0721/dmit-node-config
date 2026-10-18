@@ -18,6 +18,6 @@ check 校验证书、依赖摘要、真实配置与服务用户权限。apply �
 
 ## 版本和凭据
 
-快照绑定 schema、模板、生成器和输入/输出摘要，并完整重新生成比对。0.3.1 显式接受 0.1/0.2 模板 1 和 0.3.0/0.3.1 模板 2；未知版本拒绝。Xray 使用 systemd LoadCredential，快照/凭据 owner-only；Nginx root master 读取私钥。第三方原始输出不进入普通错误。
+快照绑定 schema、模板、生成器和输入/输出摘要，并完整重新生成比对。0.4.0 显式接受 0.1/0.2 模板 1、0.3.0/0.3.1 模板 2 和 0.4.0 模板 3；未知版本拒绝。Xray 使用 systemd LoadCredential，快照/凭据 owner-only；Nginx root master 读取私钥。第三方原始输出不进入普通错误。
 
 见 [安全](security.md)、[配置](configuration.md) 和 [设计决策](decisions/0001-lifecycle-boundaries.md)。
