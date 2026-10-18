@@ -1,6 +1,6 @@
 # CN 独立出口与测速、文件网站
 
-本页描述 **0.5.0 开发中的可选配置**，不是已发布版本或生产验收声明。正式安装入口继续以 README 标注的 Release 为准。实施和验收状态见 [实施计划](defect/11-cn-warp-web-services-plan.md) 与 [验收记录](defect/12-cn-warp-web-services-acceptance.md)。
+本页描述 **0.5.0 的可选配置**。正式发行状态以 README 标注的 Release 为准，发行不表示生产主机已升级。实施和本地验收状态见 [实施计划](defect/11-cn-warp-web-services-plan.md) 与 [验收记录](defect/12-cn-warp-web-services-acceptance.md)。
 
 ## 启用和保留配置
 
