@@ -195,7 +195,7 @@ echo 'AUTOMATED_PREVIEW_APPROVAL_IDENTITY_UPGRADE_FAILURE_RECOVERY_PASS'
 # Exercise the actual terminal path: cancel after review, then deploy and export
 # in one session without retyping a digest or persisting preview credentials.
 wizard='nodectl deploy --wizard --skip-dependencies --manual-certificates --takeover --probe-url https://127.0.0.1:9443/'
-answers() { printf '\n\n\n\n\n\n\n\n\nfalse\nmanual\n\n\n%s\n' "$1"; }
+answers() { printf '\n\n\n\n\n\n\n\n\nfalse\nfalse\nfalse\nmanual\n\n\n%s\n' "$1"; }
 before=$(sha256sum /etc/dmit-node/node.toml /etc/dmit-node/secrets.json)
 if answers no | script -q -e -c "$wizard" /root/nodectl-test/wizard-cancel.log >/dev/null; then exit 1; fi
 grep -q 'Deployment cancelled' /root/nodectl-test/wizard-cancel.log

@@ -30,8 +30,54 @@ model!(Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     vless: Option<Vless>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    distribution: Option<Distribution>
+    distribution: Option<Distribution>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cn_warp: Option<CnWarp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    web_services: Option<WebServices>
 });
+model!(CnWarp {
+    enabled: bool,
+    interface: String,
+    config_file: String,
+    routing_table: u32,
+    rule_priority: u32,
+    socket_mark: u32,
+    geodata_dir: String
+});
+model!(WebServices {
+    enabled: bool,
+    librespeed_port: u16,
+    openlist_port: u16,
+    openlist_data_dir: String,
+    openlist_files_dir: String,
+    download_size_mib: u32
+});
+impl CnWarp {
+    pub fn managed(enabled: bool) -> Self {
+        Self {
+            enabled,
+            interface: "warp-cn".into(),
+            config_file: "/etc/usque-cn/config.json".into(),
+            routing_table: 5271,
+            rule_priority: 15271,
+            socket_mark: 5271,
+            geodata_dir: "/var/lib/nodectl-geodata/202610172205".into(),
+        }
+    }
+}
+impl WebServices {
+    pub fn managed(enabled: bool) -> Self {
+        Self {
+            enabled,
+            librespeed_port: 8989,
+            openlist_port: 5244,
+            openlist_data_dir: "/var/lib/nodectl-openlist".into(),
+            openlist_files_dir: "/var/lib/nodectl-openlist-files".into(),
+            download_size_mib: 256,
+        }
+    }
+}
 model!(Distribution { enabled: bool });
 model!(Vless { encryption: bool });
 model!(Node { domain: String, aliases: Vec<String>, reality_domain: String, ipv4: String, ipv6: String });
@@ -109,6 +155,12 @@ pub struct EncryptionSecrets {
     pub reality: EncryptionPair,
 }
 impl Config {
+    pub fn routes_cn(&self) -> bool {
+        self.cn_warp.as_ref().is_some_and(|c| c.enabled)
+    }
+    pub fn serves_web(&self) -> bool {
+        self.web_services.as_ref().is_some_and(|c| c.enabled)
+    }
     pub fn distributes(&self) -> bool {
         self.distribution.as_ref().is_some_and(|d| d.enabled)
     }
@@ -245,6 +297,99 @@ impl Config {
 }
 
 pub fn validate(c: &Config, s: &Secrets) -> Result<()> {
+    if let Some(cn) = &c.cn_warp {
+        ensure!(
+            cn.interface.len() <= 15
+                && cn.interface.starts_with("warp-")
+                && cn
+                    .interface
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-'),
+            "CN WARP interface must be a distinct warp- name (at most 15 bytes)"
+        );
+        ensure!(
+            cn.config_file != c.warp.config_file,
+            "CN WARP credentials must be independent"
+        );
+        for path in [&cn.config_file, &cn.geodata_dir] {
+            ensure!(abs_path(path), "Unsafe CN WARP path");
+        }
+        ensure!(
+            (1000..=30000).contains(&cn.routing_table)
+                && (1000..=30000).contains(&cn.rule_priority)
+                && (1024..=65535).contains(&cn.socket_mark),
+            "CN WARP policy identifiers are outside the managed range"
+        );
+    }
+    if let Some(web) = &c.web_services {
+        let mut ports = BTreeSet::from([c.ports.http, c.ports.https, c.ports.reality]);
+        ensure!(
+            web.librespeed_port >= 1024
+                && web.openlist_port >= 1024
+                && ports.insert(web.librespeed_port)
+                && ports.insert(web.openlist_port),
+            "Website backend ports must be distinct unprivileged ports"
+        );
+        for path in [&web.openlist_data_dir, &web.openlist_files_dir] {
+            ensure!(abs_path(path), "Unsafe OpenList path");
+            ensure!(
+                !overlap(path, &c.website.root),
+                "OpenList private data must be outside the public website root"
+            );
+            for protected in [
+                c.tls.domain_cert_dir.as_str(),
+                c.tls.ip_cert_dir.as_str(),
+                c.warp.config_file.as_str(),
+                "/etc/nodectl-services",
+                "/var/www/nodectl-services",
+                "/var/lib/nodectl-web-guard",
+                "/var/lib/nodectl-cn-assets",
+            ]
+            .into_iter()
+            .chain(
+                c.cn_warp
+                    .as_ref()
+                    .into_iter()
+                    .flat_map(|cn| [cn.config_file.as_str(), cn.geodata_dir.as_str()]),
+            ) {
+                ensure!(
+                    !overlap(path, protected),
+                    "OpenList directories overlap protected deployment material"
+                );
+            }
+        }
+        ensure!(
+            !overlap(&web.openlist_data_dir, &web.openlist_files_dir),
+            "OpenList database and storage must be separate"
+        );
+        ensure!(
+            (16..=4096).contains(&web.download_size_mib),
+            "Test download size must be 16..4096 MiB"
+        );
+        ensure!(
+            !c.node.reality_domain.is_empty() && c.node.reality_domain != c.node.domain,
+            "OpenList requires a distinct files/REALITY domain"
+        );
+        for reserved in ["/librespeed/", "/downloads/"] {
+            for path in [
+                &c.transport.xhttp.path,
+                &c.transport.ws.path,
+                &c.transport.reality.path,
+            ] {
+                ensure!(
+                    !overlap(path, reserved),
+                    "Website route overlaps a transport path"
+                );
+            }
+            ensure!(
+                !c.website
+                    .reserved_paths
+                    .iter()
+                    .any(|p| overlap(p, reserved)),
+                "Website route overlaps an operator-reserved route"
+            );
+        }
+    }
     if c.distribution.is_some() {
         for path in [
             &c.transport.xhttp.path,
@@ -558,6 +703,11 @@ pub fn init(dir: &Path, example: Option<&Path>, rotate: &[String]) -> Result<()>
     }
     if config_path.exists() && config.get("distribution").is_none() {
         defaults.as_table_mut().unwrap().remove("distribution");
+    }
+    for section in ["cn_warp", "web_services"] {
+        if config_path.exists() && config.get(section).is_none() {
+            defaults.as_table_mut().unwrap().remove(section);
+        }
     }
     merge_missing(&mut config, &defaults);
     for field in rotate.iter().filter(|s| s.starts_with("transport.")) {

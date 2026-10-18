@@ -51,6 +51,65 @@ fn json_file(files: &BTreeMap<String, Vec<u8>>, name: &str) -> Value {
 }
 
 #[test]
+fn web_virtual_hosts_preserve_transports_subscription_and_private_storage() {
+    let (mut c, s) = fixture();
+    c.distribution = Some(config::Distribution { enabled: true });
+    c.web_services = Some(config::WebServices {
+        enabled: true,
+        librespeed_port: 8989,
+        openlist_port: 5244,
+        openlist_data_dir: "/var/lib/nodectl-openlist".into(),
+        openlist_files_dir: "/var/lib/nodectl-openlist-files".into(),
+        download_size_mib: 256,
+    });
+    config::validate(&c, &s).unwrap();
+    let files = render::files(&c, &s).unwrap();
+    let nginx = String::from_utf8(files["nginx.conf"].clone()).unwrap();
+    assert!(nginx.contains("server_name speedtest.example.com;"));
+    assert!(nginx.contains("server_name files.example.com;"));
+    assert_eq!(nginx.matches("grpc_pass unix:").count(), 2);
+    assert_eq!(
+        nginx
+            .matches("proxy_pass http://unix:/run/nodectl-share")
+            .count(),
+        3
+    );
+    assert!(nginx.contains("proxy_pass http://127.0.0.1:5244"));
+    assert!(!nginx.contains("root /var/lib/nodectl-openlist"));
+    assert!(nginx.contains("proxy_request_buffering off"));
+    let files_host = nginx
+        .split("server_name files.example.com;")
+        .nth(1)
+        .unwrap();
+    assert!(!files_host.contains("location = /nodes/api"));
+    assert!(files_host.contains("return 302 https://speedtest.example.com/nodes/"));
+    assert!(files_host.contains("location = /nodes/sub/mihomo"));
+    assert!(files_host.contains("Content-Security-Policy \"sandbox;"));
+    assert!(files.contains_key("website/index.html"));
+    assert!(
+        !String::from_utf8(files["website/index.html"].clone())
+            .unwrap()
+            .contains("example.com/nodes/sub")
+    );
+    let old = crate::render_v3::files(
+        &{
+            let mut c = c.clone();
+            c.web_services = None;
+            c
+        },
+        &s,
+    )
+    .unwrap();
+    assert!(
+        !String::from_utf8(old["nginx.conf"].clone())
+            .unwrap()
+            .contains("librespeed")
+    );
+    c.web_services.as_mut().unwrap().openlist_files_dir = c.website.root.clone();
+    assert!(config::validate(&c, &s).is_err());
+}
+
+#[test]
 fn legacy_snapshot_requires_complete_regeneration_and_known_generator() {
     let (_tmp, store) = sandbox();
     let id = store.render().unwrap();

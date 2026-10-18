@@ -179,6 +179,15 @@ fn dependencies(c: &Config, reference: &Reference) -> Result<BTreeMap<String, St
     if c.warp.enabled {
         files.extend([c.runtime.usque_binary.clone(), c.warp.config_file.clone()]);
     }
+    if let Some(cn) = c.cn_warp.as_ref().filter(|cn| cn.enabled) {
+        files.extend([c.runtime.usque_binary.clone(), cn.config_file.clone()]);
+    }
+    if c.serves_web() {
+        files.extend([
+            "/usr/local/bin/speedtest-backend".into(),
+            "/usr/local/bin/openlist".into(),
+        ]);
+    }
     files
         .into_iter()
         .map(|p| Ok((p.clone(), store::file_digest(Path::new(&p))?)))
@@ -358,21 +367,36 @@ fn preflight(store: &Store, id: &str, reference: &Reference) -> Result<(Config, 
     )?;
     command("chmod", &["0750", path(tmp.path())?])?;
     command("chmod", &["0640", path(&candidate)?])?;
-    command(
-        "runuser",
-        &[
-            "-u",
-            &c.runtime.xray_user,
-            "-g",
-            &c.runtime.nginx_user,
-            "--",
-            &c.runtime.xray_binary,
-            "run",
-            "-test",
-            "-config",
-            path(&candidate)?,
-        ],
-    )?;
+    if c.routes_cn() {
+        for name in ["geoip.dat", "geosite.dat"] {
+            let file = tmp.path().join(name);
+            store::atomic_write(&file, &fs::read(release.join("geodata").join(name))?)?;
+            command(
+                "chown",
+                &[&format!("root:{}", c.runtime.nginx_user), path(&file)?],
+            )?;
+            command("chmod", &["0640", path(&file)?])?;
+        }
+    }
+    let asset_env = format!("XRAY_LOCATION_ASSET={}", tmp.path().display());
+    let mut xray_check = vec![
+        "-u",
+        &c.runtime.xray_user,
+        "-g",
+        &c.runtime.nginx_user,
+        "--",
+    ];
+    if c.routes_cn() {
+        xray_check.extend(["/usr/bin/env", &asset_env]);
+    }
+    xray_check.extend([
+        &c.runtime.xray_binary,
+        "run",
+        "-test",
+        "-config",
+        path(&candidate)?,
+    ]);
+    command("runuser", &xray_check)?;
     command(
         &c.runtime.nginx_binary,
         &["-t", "-c", path(&release.join("nginx.conf"))?],
@@ -385,11 +409,40 @@ fn preflight(store: &Store, id: &str, reference: &Reference) -> Result<(Config, 
         verify_units.push(path(&warp_unit)?);
     }
     let share_unit = release.join(SHARE_SOURCE);
+    let cn_unit = release.join("systemd/usque-cn.service");
+    let speed_unit = release.join("systemd/librespeed.service");
+    let files_unit = release.join("systemd/openlist.service");
+    if c.serves_web() {
+        for binary in [
+            "/usr/local/bin/speedtest-backend",
+            "/usr/local/bin/openlist",
+        ] {
+            trusted_binary(Path::new(binary))?;
+        }
+        crate::web_services::verify_binaries()?;
+        access(
+            "nodectl-speed",
+            None,
+            "-x",
+            "/usr/local/bin/speedtest-backend",
+        )?;
+        access("nodectl-files", None, "-x", "/usr/local/bin/openlist")?;
+        verify_units.extend([path(&speed_unit)?, path(&files_unit)?]);
+    }
+    if c.routes_cn() {
+        verify_units.push(path(&cn_unit)?);
+        crate::cn_warp::platform(&c)?;
+        crate::cn_warp::credentials(&c)?;
+        crate::cn_route::Policy::from(c.cn_warp.as_ref().unwrap()).inspect()?;
+    }
     if c.distributes() {
         ensure!(
             crate::share::access_status(store) != "invalid",
             "Distribution credential record is invalid; recover protected access material first"
         );
+        verify_units.push(path(&share_unit)?);
+    }
+    if c.distributes() || c.routes_cn() {
         trusted_binary(Path::new("/usr/local/bin/nodectl"))?;
         ensure!(
             store::file_digest(Path::new("/usr/local/bin/nodectl"))?
@@ -399,9 +452,8 @@ fn preflight(store: &Store, id: &str, reference: &Reference) -> Result<(Config, 
         ensure!(
             command("/usr/local/bin/nodectl", &["--version"])?.trim()
                 == format!("nodectl {}", env!("CARGO_PKG_VERSION")),
-            "Distribution requires the current nodectl at its canonical installed path"
+            "Managed helpers require the current nodectl at its canonical installed path"
         );
-        verify_units.push(path(&share_unit)?);
     }
     command("systemd-analyze", &verify_units)?;
     if c.warp.enabled {
@@ -462,6 +514,46 @@ pub(crate) const ENTRIES: [(&str, &str); 5] = [
 pub(crate) const SERVICES: [&str; 3] = ["xray", "nginx", "usque-warp"];
 pub(crate) const SHARE_ENTRY: &str = "/etc/systemd/system/nodectl-share.service";
 pub(crate) const SHARE_SERVICE: &str = "nodectl-share";
+const CN_SERVICE: &str = "usque-cn";
+const CN_ENTRIES: [(&str, &str); 3] = [
+    (
+        "/etc/systemd/system/usque-cn.service",
+        "systemd/usque-cn.service",
+    ),
+    ("/etc/xray/geoip.dat", "geodata/geoip.dat"),
+    ("/etc/xray/geosite.dat", "geodata/geosite.dat"),
+];
+pub(crate) const WEB_SERVICES: [&str; 2] = ["librespeed", "openlist"];
+pub(crate) const WEB_ENTRIES: [(&str, &str); 4] = [
+    (
+        "/etc/systemd/system/librespeed.service",
+        "systemd/librespeed.service",
+    ),
+    (
+        "/etc/systemd/system/openlist.service",
+        "systemd/openlist.service",
+    ),
+    (
+        "/etc/nodectl-services/librespeed.toml",
+        "web/librespeed.toml",
+    ),
+    ("/var/www/nodectl-services/current", "public-website"),
+];
+
+pub(crate) fn managed_cn_policy(
+    store: &Store,
+    c: &Config,
+) -> Result<Option<crate::cn_route::Policy>> {
+    let policy = if let Some(cn) = c.cn_warp.as_ref().filter(|cn| cn.enabled) {
+        Some(crate::cn_route::Policy::from(cn))
+    } else {
+        installation(store)?.and_then(|b| b.cn).map(|cn| cn.policy)
+    };
+    if let Some(policy) = &policy {
+        policy.inspect()?;
+    }
+    Ok(policy)
+}
 const SHARE_SOURCE: &str = "systemd/nodectl-share.service";
 
 fn checkpoint(_name: &str) -> Result<()> {
@@ -496,6 +588,7 @@ pub(crate) struct Service {
     pub(crate) enabled: String,
 }
 #[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Transaction {
     candidate: String,
     current: Option<String>,
@@ -507,6 +600,338 @@ struct Transaction {
     backup: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     sharing: Option<Sharing>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cn: Option<CnState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    web: Option<WebState>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WebState {
+    entries: BTreeMap<String, Entry>,
+    services: BTreeMap<String, Service>,
+}
+
+fn web_target(store: &Store, id: &str, source: &str) -> Result<PathBuf> {
+    store.release(id)?;
+    Ok(if source == "public-website" {
+        Path::new(crate::web_services::PUBLIC_ROOT)
+            .join("releases")
+            .join(id)
+    } else {
+        store.release(id)?.join(source)
+    })
+}
+
+fn web_state(store: &Store, c: &Config, backup: &Path) -> Result<Option<WebState>> {
+    if !c.serves_web() && installation(store)?.is_none_or(|b| b.web.is_none()) {
+        return Ok(None);
+    }
+    let entries = WEB_ENTRIES
+        .iter()
+        .enumerate()
+        .map(|(i, (dest, _))| {
+            Ok((
+                dest.to_string(),
+                entry(Path::new(dest), &backup.join(format!("entry-web-{i}")))?,
+            ))
+        })
+        .collect::<Result<_>>()?;
+    let services = WEB_SERVICES
+        .into_iter()
+        .map(|name| Ok((name.into(), recorded_service_state(store, name)?)))
+        .collect::<Result<_>>()?;
+    Ok(Some(WebState { entries, services }))
+}
+
+fn extend_web_installation(store: &Store, tx: &Transaction) -> Result<()> {
+    let Some(web) = &tx.web else { return Ok(()) };
+    let Some(mut baseline) = installation(store)? else {
+        return Ok(());
+    };
+    if baseline.web.is_some() {
+        return Ok(());
+    }
+    validate_transaction(store, &baseline)?;
+    let mut original = web.clone();
+    for (i, e) in original.entries.values_mut().enumerate() {
+        if let Entry::File { backup, sha256, .. } = e {
+            ensure!(
+                store::file_digest(backup)? == *sha256,
+                "Website backup changed"
+            );
+            let target = baseline.backup.join(format!("web-original-{i}"));
+            ensure!(!target.exists(), "Website original backup already exists");
+            store::atomic_write(&target, &fs::read(&*backup)?)?;
+            *backup = target;
+        }
+    }
+    baseline.web = Some(original);
+    store::atomic_write(
+        &store.state_dir.join("installation.json"),
+        &serde_json::to_vec_pretty(&baseline)?,
+    )
+}
+
+fn authorize_web(store: &Store, id: &str, current: Option<&str>, web: &WebState) -> Result<()> {
+    let path = store
+        .state_dir
+        .join("takeover")
+        .join(id)
+        .join("entries.json");
+    let approvals: BTreeMap<String, Entry> = if path.exists() {
+        store::check_private(&path, false)?;
+        serde_json::from_slice(&fs::read(path)?)?
+    } else {
+        BTreeMap::new()
+    };
+    let baseline = installation(store)?;
+    for (destination, source) in WEB_ENTRIES {
+        let observed = &web.entries[destination];
+        let managed = current.is_some_and(|old| {
+            web_target(store, old, source)
+                .is_ok_and(|p| matches!(observed,Entry::Link{target} if *target==p))
+        });
+        let original = baseline
+            .as_ref()
+            .and_then(|b| b.web.as_ref())
+            .and_then(|b| b.entries.get(destination))
+            .is_some_and(|e| fingerprint(e) == fingerprint(observed));
+        ensure!(
+            matches!(observed, Entry::Missing)
+                || managed
+                || original
+                || approvals
+                    .get(destination)
+                    .is_some_and(|e| fingerprint(e) == fingerprint(observed)),
+            "Unmanaged website entrypoint {destination}; explicit takeover required"
+        );
+    }
+    Ok(())
+}
+
+fn restore_web_entries(web: &WebState) -> Result<()> {
+    for name in WEB_SERVICES {
+        stop_service(name)?;
+        let state = service_state(name)?;
+        if state.enabled.starts_with("enabled") {
+            command("systemctl", &["disable", name])?;
+        }
+    }
+    for (destination, e) in &web.entries {
+        restore_entry(Path::new(destination), e)?;
+    }
+    command("systemctl", &["daemon-reload"])?;
+    Ok(())
+}
+
+fn restore_web_services(web: &WebState) -> Result<()> {
+    for name in WEB_SERVICES {
+        let expected = &web.services[name];
+        if expected.enabled == "enabled" {
+            command("systemctl", &["enable", name])?;
+        }
+        if expected.enabled == "enabled-runtime" {
+            command("systemctl", &["enable", "--runtime", name])?;
+        }
+        if expected.active {
+            command("systemctl", &["restart", name])?;
+        }
+        let state = service_state(name)?;
+        ensure!(
+            state.active == expected.active && state.enabled == expected.enabled,
+            "Website service recovery failed"
+        );
+    }
+    Ok(())
+}
+
+fn activate_web(store: &Store, id: &str, c: &Config, tx: &Transaction) -> Result<()> {
+    if !c.serves_web() {
+        return Ok(());
+    }
+    crate::web_services::publish_assets(store, id)?;
+    for (destination, source) in WEB_ENTRIES {
+        fs::create_dir_all(Path::new(destination).parent().unwrap())?;
+        store::replace_link(&web_target(store, id, source)?, Path::new(destination))?;
+    }
+    command("systemctl", &["daemon-reload"])?;
+    for name in WEB_SERVICES {
+        command("systemctl", &["enable", name])?;
+        command("systemctl", &["restart", name])?;
+    }
+    crate::web_services::health(c)?;
+    crate::web_services::initialize_storage(c)?;
+    ensure!(tx.web.is_some(), "Website transaction baseline missing");
+    checkpoint("web-services")
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CnState {
+    entries: BTreeMap<String, Entry>,
+    service: Service,
+    policy: crate::cn_route::Policy,
+    policy_existed: bool,
+}
+
+fn cn_state(store: &Store, c: &Config, backup: &Path) -> Result<Option<CnState>> {
+    let baseline = installation(store)?;
+    let policy = if let Some(cn) = c.cn_warp.as_ref().filter(|cn| cn.enabled) {
+        Some(crate::cn_route::Policy::from(cn))
+    } else {
+        baseline
+            .as_ref()
+            .and_then(|b| b.cn.as_ref())
+            .map(|s| s.policy.clone())
+    };
+    let Some(policy) = policy else {
+        return Ok(None);
+    };
+    let policy_existed = policy.inspect()?;
+    let mut entries = BTreeMap::new();
+    for (i, (destination, _)) in CN_ENTRIES.iter().enumerate() {
+        entries.insert(
+            destination.to_string(),
+            entry(
+                Path::new(destination),
+                &backup.join(format!("entry-cn-{i}")),
+            )?,
+        );
+    }
+    Ok(Some(CnState {
+        entries,
+        service: service_state(CN_SERVICE)?,
+        policy,
+        policy_existed,
+    }))
+}
+
+fn extend_cn_installation(store: &Store, tx: &Transaction) -> Result<()> {
+    let Some(cn) = &tx.cn else { return Ok(()) };
+    let Some(mut baseline) = installation(store)? else {
+        return Ok(());
+    };
+    if baseline.cn.is_some() {
+        return Ok(());
+    }
+    validate_transaction(store, &baseline)?;
+    let mut original = cn.clone();
+    for (i, entry) in original.entries.values_mut().enumerate() {
+        if let Entry::File { backup, sha256, .. } = entry {
+            ensure!(
+                store::file_digest(backup)? == *sha256,
+                "CN baseline backup changed"
+            );
+            let target = baseline.backup.join(format!("cn-original-{i}"));
+            ensure!(!target.exists(), "CN original backup already exists");
+            store::atomic_write(&target, &fs::read(&*backup)?)?;
+            *backup = target;
+        }
+    }
+    baseline.cn = Some(original);
+    store::atomic_write(
+        &store.state_dir.join("installation.json"),
+        &serde_json::to_vec_pretty(&baseline)?,
+    )
+}
+
+fn authorize_cn(store: &Store, id: &str, current: Option<&str>, cn: &CnState) -> Result<()> {
+    let path = store
+        .state_dir
+        .join("takeover")
+        .join(id)
+        .join("entries.json");
+    let approvals: BTreeMap<String, Entry> = if path.exists() {
+        store::check_private(&path, false)?;
+        serde_json::from_slice(&fs::read(path)?)?
+    } else {
+        BTreeMap::new()
+    };
+    let baseline = installation(store)?;
+    for (dest, source) in CN_ENTRIES {
+        let observed = &cn.entries[dest];
+        let managed = current.is_some_and(|id| {
+            store
+                .release(id)
+                .is_ok_and(|p| matches!(observed,Entry::Link{target} if *target==p.join(source)))
+        });
+        let original = baseline
+            .as_ref()
+            .and_then(|b| b.cn.as_ref())
+            .and_then(|cn| cn.entries.get(dest))
+            .is_some_and(|e| fingerprint(e) == fingerprint(observed));
+        ensure!(
+            matches!(observed, Entry::Missing)
+                || managed
+                || original
+                || approvals
+                    .get(dest)
+                    .is_some_and(|e| fingerprint(e) == fingerprint(observed)),
+            "Unmanaged CN WARP entrypoint {dest}; explicit takeover required"
+        );
+    }
+    Ok(())
+}
+
+fn activate_cn(store: &Store, id: &str, c: &Config, tx: &Transaction) -> Result<()> {
+    if !c.routes_cn() {
+        return Ok(());
+    }
+    crate::cn_warp::publish_runtime_assets(store, id)?;
+    let cn = tx.cn.as_ref().context("CN transaction facts are missing")?;
+    for (destination, source) in CN_ENTRIES {
+        fs::create_dir_all(Path::new(destination).parent().unwrap())?;
+        store::replace_link(&store.release(id)?.join(source), Path::new(destination))?;
+    }
+    command("systemctl", &["daemon-reload"])?;
+    cn.policy.inspect()?;
+    command("systemctl", &["enable", CN_SERVICE])?;
+    command("systemctl", &["restart", CN_SERVICE])?;
+    command("systemctl", &["is-active", "--quiet", CN_SERVICE])?;
+    checkpoint("cn-warp")
+}
+
+fn restore_cn_entries(cn: &CnState) -> Result<()> {
+    stop_service(CN_SERVICE)?;
+    let current = service_state(CN_SERVICE)?;
+    if current.enabled.starts_with("enabled") {
+        command("systemctl", &["disable", CN_SERVICE])?;
+    }
+    for (destination, e) in &cn.entries {
+        restore_entry(Path::new(destination), e)?;
+    }
+    command("systemctl", &["daemon-reload"])?;
+    Ok(())
+}
+
+fn restore_cn_service(cn: &CnState) -> Result<()> {
+    if !cn.policy_existed {
+        cn.policy.release()?;
+    }
+    if cn.service.enabled == "enabled" {
+        command("systemctl", &["enable", CN_SERVICE])?;
+    }
+    if cn.service.enabled == "enabled-runtime" {
+        command("systemctl", &["enable", "--runtime", CN_SERVICE])?;
+    }
+    if cn.service.active {
+        command("systemctl", &["restart", CN_SERVICE])?;
+    }
+    let restored = service_state(CN_SERVICE)?;
+    ensure!(
+        restored.active == cn.service.active && restored.enabled == cn.service.enabled,
+        "CN service recovery failed"
+    );
+    Ok(())
+}
+
+fn routes_without_cn(routes: &str, cn: Option<&CnState>) -> Result<String> {
+    let Some(cn) = cn else {
+        return Ok(routes.into());
+    };
+    cn.policy.without_routes(routes)
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -729,6 +1154,12 @@ pub fn takeover(store: &Store, id: &str) -> Result<()> {
         ));
         authorization.insert(SHARE_ENTRY.into(), e);
     }
+    if let Some(cn) = cn_state(store, &store.verify(id)?.0, &dir)? {
+        authorization.extend(cn.entries);
+    }
+    if let Some(web) = web_state(store, &store.verify(id)?.0, &dir)? {
+        authorization.extend(web.entries);
+    }
     store::atomic_write(
         &dir.join("entries.json"),
         &serde_json::to_vec_pretty(&authorization)?,
@@ -772,6 +1203,16 @@ fn authorized(
     Ok(())
 }
 
+/// Recovery must stop auto-restarting services before asking for stable facts.
+/// Planning still refuses transitioning services rather than guessing a baseline.
+pub(crate) fn stop_service(name: &str) -> Result<()> {
+    let loaded = command("systemctl", &["show", name, "-p", "LoadState", "--value"])?;
+    if loaded.trim() != "not-found" {
+        command("systemctl", &["stop", name])?;
+    }
+    Ok(())
+}
+
 pub(crate) fn service_state(name: &str) -> Result<Service> {
     let load = command("systemctl", &["show", name, "-p", "LoadState", "--value"])?;
     let enabled = if load.trim() == "not-found" {
@@ -805,6 +1246,10 @@ pub(crate) fn service_state(name: &str) -> Result<Service> {
         active: active.trim() == "active",
         enabled,
     })
+}
+
+fn recorded_service_state(store: &Store, name: &str) -> Result<Service> {
+    crate::deploy::service_before_preparation(store, name)?.map_or_else(|| service_state(name), Ok)
 }
 
 pub(crate) fn default_routes(ipv6: bool) -> Result<String> {
@@ -841,6 +1286,26 @@ pub(crate) fn apply_with_access_token(
     id: &str,
     access_token: Option<&str>,
 ) -> Result<()> {
+    apply_inner(store, id, access_token, false)
+}
+
+/// The outer transaction has validated its private backup and restored the
+/// sharing link to this exact previous snapshot. Other entrypoints and normal
+/// apply still require their usual current-release/takeover authorization.
+pub(crate) fn apply_after_material_restore(
+    store: &Store,
+    id: &str,
+    sharing_restored: bool,
+) -> Result<()> {
+    apply_inner(store, id, None, sharing_restored)
+}
+
+fn apply_inner(
+    store: &Store,
+    id: &str,
+    access_token: Option<&str>,
+    sharing_restored: bool,
+) -> Result<()> {
     linux_root()?;
     store.release(id)?;
     let r = receipt(store, id)?;
@@ -855,12 +1320,33 @@ pub(crate) fn apply_with_access_token(
             );
         }
         health(&c, &s, &r.reference)?;
+        if c.routes_cn() {
+            for (destination, source) in CN_ENTRIES {
+                ensure!(
+                    fs::read_link(destination).ok() == Some(store.release(id)?.join(source)),
+                    "CN WARP entrypoint drifted"
+                );
+            }
+            ensure!(
+                crate::cn_route::Policy::from(c.cn_warp.as_ref().unwrap()).inspect()?,
+                "CN WARP policy missing"
+            );
+            command("systemctl", &["is-active", "--quiet", CN_SERVICE])?;
+        }
         if c.distributes() {
             ensure!(
                 fs::read_link(SHARE_ENTRY).ok() == Some(store.release(id)?.join(SHARE_SOURCE)),
                 "Distribution entrypoint drifted"
             );
             crate::share_http::health()?;
+        }
+        if c.serves_web() {
+            for (destination, source) in WEB_ENTRIES {
+                ensure!(
+                    fs::read_link(destination).ok() == Some(web_target(store, id, source)?),
+                    "Website entrypoint drifted: {destination}"
+                );
+            }
         }
         return Ok(());
     }
@@ -879,7 +1365,7 @@ pub(crate) fn apply_with_access_token(
     authorized(store, id, current.as_deref(), &entries)?;
     let services = SERVICES
         .into_iter()
-        .map(|name| Ok((name.to_owned(), service_state(name)?)))
+        .map(|name| Ok((name.to_owned(), recorded_service_state(store, name)?)))
         .collect::<Result<_>>()?;
     let tx = Transaction {
         candidate: id.into(),
@@ -890,11 +1376,21 @@ pub(crate) fn apply_with_access_token(
         routes: default_routes(false)?,
         routes6: default_routes(true)?,
         sharing: sharing_state(store, &c, &backup)?,
+        cn: cn_state(store, &c, &backup)?,
+        web: web_state(store, &c, &backup)?,
         backup,
     };
+    if let Some(cn) = &tx.cn {
+        authorize_cn(store, id, tx.current.as_deref(), cn)?;
+    }
+    if let Some(web) = &tx.web {
+        authorize_web(store, id, tx.current.as_deref(), web)?;
+    }
     if let Some(sharing) = &tx.sharing {
         let managed = tx.current.as_ref().is_some_and(|old| matches!(&sharing.entry, Entry::Link {target} if store.release(old).is_ok_and(|p| *target == p.join(SHARE_SOURCE))));
-        if !matches!(sharing.entry, Entry::Missing) && !managed {
+        let restored = sharing_restored
+            && matches!(&sharing.entry, Entry::Link { target } if *target == store.release(id)?.join(SHARE_SOURCE));
+        if !matches!(sharing.entry, Entry::Missing) && !managed && !restored {
             let approvals = store
                 .state_dir
                 .join("takeover")
@@ -924,6 +1420,8 @@ pub(crate) fn apply_with_access_token(
         )?;
     } else {
         extend_installation(store, &tx)?;
+        extend_cn_installation(store, &tx)?;
+        extend_web_installation(store, &tx)?;
     }
     store::atomic_write(&journal, &serde_json::to_vec_pretty(&tx)?)?;
     checkpoint("journal")?;
@@ -998,6 +1496,8 @@ fn activate(
         command("systemctl", &["daemon-reload"])?;
     }
     checkpoint("daemon-reload")?;
+    activate_cn(store, id, c, tx)?;
+    activate_web(store, id, c, tx)?;
     activate_sharing(store, id, c, tx, access_token)?;
     let xray_changed =
         changed(store, id, old, "xray.json")? || changed(store, id, old, "systemd/xray.service")?;
@@ -1006,6 +1506,13 @@ fn activate(
     }
     command("systemctl", &["enable", "xray"])?;
     checkpoint("xray")?;
+    if !c.routes_cn()
+        && tx.cn.is_some()
+        && let Some(baseline) = installation(store)?.and_then(|b| b.cn)
+    {
+        restore_cn_entries(&baseline)?;
+        restore_cn_service(&baseline)?;
+    }
     let nginx_unit = changed(store, id, old, "systemd/nginx.service")?;
     let listeners_changed = old_c.as_ref().is_none_or(|old| {
         old.ports.http != c.ports.http
@@ -1013,13 +1520,24 @@ fn activate(
             || old.node.ipv6.is_empty() != c.node.ipv6.is_empty()
             || old.tls.http3 != c.tls.http3
     });
-    if nginx_unit || listeners_changed || !tx.services["nginx"].active {
+    if nginx_unit
+        || listeners_changed
+        || !tx.services["nginx"].active
+        || !service_state("nginx")?.active
+    {
         command("systemctl", &["restart", "nginx"])?;
     } else if changed(store, id, old, "nginx.conf")? {
         command("systemctl", &["reload", "nginx"])?;
     }
     command("systemctl", &["enable", "nginx"])?;
     checkpoint("nginx")?;
+    if !c.serves_web()
+        && tx.web.is_some()
+        && let Some(original) = installation(store)?.and_then(|b| b.web)
+    {
+        restore_web_entries(&original)?;
+        restore_web_services(&original)?;
+    }
     let warp_changed = changed(store, id, old, "systemd/usque-warp.service")?
         || old_c
             .as_ref()
@@ -1056,7 +1574,10 @@ fn activate(
     health(c, s, &r.reference)?;
     checkpoint("health")?;
     ensure!(
-        tx.routes == default_routes(false)? && tx.routes6 == default_routes(true)?,
+        routes_without_cn(&tx.routes, tx.cn.as_ref())?
+            == routes_without_cn(&default_routes(false)?, tx.cn.as_ref())?
+            && routes_without_cn(&tx.routes6, tx.cn.as_ref())?
+                == routes_without_cn(&default_routes(true)?, tx.cn.as_ref())?,
         "Default routes changed during deployment"
     );
     store.set_pointer("previous", tx.current.as_deref())?;
@@ -1097,6 +1618,10 @@ fn restore_entry(dest: &Path, e: &Entry) -> Result<()> {
 }
 
 fn restore(store: &Store, tx: &Transaction) -> Result<()> {
+    ensure!(
+        !crate::deploy::database_recovery_pending(store)?,
+        "Database preparation must be restored by the outer deployment transaction before services restart"
+    );
     let mut errors = vec![];
     let mut attempt = |label: &str, result: Result<()>| {
         if result.is_err() {
@@ -1130,6 +1655,12 @@ fn restore(store: &Store, tx: &Transaction) -> Result<()> {
             Err(e) => attempt(&format!("inspect {name}"), Err(e)),
         }
     }
+    if let Some(cn) = &tx.cn {
+        attempt("restore CN entrypoints", restore_cn_entries(cn));
+    }
+    if let Some(web) = &tx.web {
+        attempt("restore website entrypoints", restore_web_entries(web));
+    }
     for (index, (dest, e)) in tx.entries.iter().enumerate() {
         attempt(
             dest,
@@ -1141,6 +1672,12 @@ fn restore(store: &Store, tx: &Transaction) -> Result<()> {
         "daemon-reload",
         command("systemctl", &["daemon-reload"]).map(|_| ()),
     );
+    if let Some(cn) = &tx.cn {
+        attempt("restore CN service and policy", restore_cn_service(cn));
+    }
+    if let Some(web) = &tx.web {
+        attempt("restore website services", restore_web_services(web));
+    }
     for name in SERVICES {
         let state = &tx.services[name];
         if state.enabled == "enabled" {
@@ -1297,6 +1834,9 @@ fn health(c: &Config, s: &Secrets, reference: &Reference) -> Result<()> {
         handshake(c, s, reference, kind)
             .with_context(|| format!("{kind} live handshake failed"))?;
     }
+    crate::cn_warp::health(c)?;
+    crate::web_services::health(c)?;
+    crate::web_services::public_health(c)?;
     for name in ["xray", "nginx"]
         .into_iter()
         .chain(c.warp.enabled.then_some("usque-warp"))
@@ -1304,6 +1844,12 @@ fn health(c: &Config, s: &Secrets, reference: &Reference) -> Result<()> {
         command("systemctl", &["is-active", "--quiet", name])?;
     }
     Ok(())
+}
+
+pub(crate) fn verify_live_success(store: &Store, id: &str) -> Result<()> {
+    let receipt = receipt(store, id)?;
+    let (c, s) = store.verify(id)?;
+    health(&c, &s, &receipt.reference)
 }
 
 fn handshake(c: &Config, s: &Secrets, reference: &Reference, kind: &str) -> Result<()> {
@@ -1443,10 +1989,35 @@ fn validate_transaction(store: &Store, tx: &Transaction) -> Result<()> {
             && SERVICES.iter().all(|s| tx.services.contains_key(*s)),
         "Unexpected transaction services"
     );
+    if let Some(cn) = &tx.cn {
+        cn.policy.validate()?;
+        ensure!(
+            cn.entries.len() == CN_ENTRIES.len()
+                && CN_ENTRIES
+                    .iter()
+                    .all(|(dest, _)| cn.entries.contains_key(*dest)),
+            "Unexpected CN transaction entrypoints"
+        );
+    }
+    if let Some(web) = &tx.web {
+        ensure!(
+            web.entries.len() == WEB_ENTRIES.len()
+                && WEB_ENTRIES
+                    .iter()
+                    .all(|(dest, _)| web.entries.contains_key(*dest))
+                && web.services.len() == WEB_SERVICES.len()
+                && WEB_SERVICES
+                    .iter()
+                    .all(|name| web.services.contains_key(*name)),
+            "Unexpected website transaction entries or services"
+        );
+    }
     for entry in tx
         .entries
         .values()
         .chain(tx.sharing.iter().map(|sharing| &sharing.entry))
+        .chain(tx.cn.iter().flat_map(|cn| cn.entries.values()))
+        .chain(tx.web.iter().flat_map(|web| web.entries.values()))
     {
         if let Entry::File { backup, sha256, .. } = entry {
             ensure!(
@@ -1498,6 +2069,52 @@ pub fn uninstall(store: &Store, execute: bool) -> Result<()> {
         }
         println!("Restore {SHARE_ENTRY} to {}", fingerprint(&sharing.entry));
     }
+    if let Some(cn) = &baseline.cn {
+        let config = store.verify(&current)?.0;
+        for (destination, source) in CN_ENTRIES {
+            if config.routes_cn() {
+                ensure!(
+                    fs::read_link(destination).ok() == Some(store.release(&current)?.join(source)),
+                    "CN WARP entrypoint drifted before uninstall"
+                );
+            } else {
+                let observed = inspect_entry(Path::new(destination), None)?;
+                ensure!(
+                    fingerprint(&observed) == fingerprint(&cn.entries[destination]),
+                    "Restored CN WARP entrypoint drifted before uninstall"
+                );
+            }
+            println!(
+                "Restore {destination} to {}",
+                fingerprint(&cn.entries[destination])
+            );
+        }
+        println!(
+            "Restore independent CN tunnel and its owned policy without changing native routes."
+        );
+    }
+    if let Some(web) = &baseline.web {
+        let config = store.verify(&current)?.0;
+        for (destination, source) in WEB_ENTRIES {
+            if config.serves_web() {
+                ensure!(
+                    fs::read_link(destination).ok() == Some(web_target(store, &current, source)?),
+                    "Website entrypoint drifted before uninstall: {destination}"
+                );
+            } else {
+                let observed = inspect_entry(Path::new(destination), None)?;
+                ensure!(
+                    fingerprint(&observed) == fingerprint(&web.entries[destination]),
+                    "Restored website entrypoint drifted before uninstall: {destination}"
+                );
+            }
+            println!(
+                "Restore {destination} to {}",
+                fingerprint(&web.entries[destination])
+            );
+        }
+        println!("Retain OpenList database, uploaded files and administrator credentials.");
+    }
     for (name, state) in &baseline.services {
         println!(
             "Restore service {name}: active={}, enabled={}",
@@ -1544,11 +2161,25 @@ pub fn uninstall(store: &Store, execute: bool) -> Result<()> {
             sharing.created_token = false;
             sharing
         }),
+        cn: cn_state(store, &store.verify(&current)?.0, &backup)?,
+        web: web_state(store, &store.verify(&current)?.0, &backup)?,
         backup,
     };
     // Network changes made since installation are not owned by uninstall.
-    baseline.routes = rollback.routes.clone();
-    baseline.routes6 = rollback.routes6.clone();
+    baseline.routes = routes_without_cn(
+        &rollback.routes,
+        rollback
+            .cn
+            .as_ref()
+            .filter(|_| baseline.cn.as_ref().is_some_and(|cn| !cn.policy_existed)),
+    )?;
+    baseline.routes6 = routes_without_cn(
+        &rollback.routes6,
+        rollback
+            .cn
+            .as_ref()
+            .filter(|_| baseline.cn.as_ref().is_some_and(|cn| !cn.policy_existed)),
+    )?;
     let pending = store.state_dir.join("uninstall.json");
     store::atomic_write(
         &pending,

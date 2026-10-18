@@ -33,3 +33,13 @@
 外部运行组件： [Xray Core](https://github.com/XTLS/Xray-core)（MPL-2.0）、[Nginx](https://github.com/nginx/nginx)（BSD-2-Clause）、[usque](https://github.com/Diniboy1123/usque)（MIT）、[acme.sh](https://github.com/acmesh-official/acme.sh)（GPL-3.0）。这些组件作为独立进程运行，并未重写或链接进 Rust 程序。
 
 验收客户端另使用 [Mihomo v1.19.32](https://github.com/MetaCubeX/mihomo/tree/v1.19.32)（GPL-3.0）；官方归档摘要固定在 versions.lock.toml。测试下载后作为独立进程执行，不安装到生产服务，也不打包进 nodectl 发行归档。
+
+可选网站服务及 CN 分流另外使用下列独立上游组件。版本、归档与可执行文件或数据文件摘要由 `versions.lock.toml` 固定；安装时从上游获取，不包含在 nodectl 发行归档中。
+
+| Component | Version | Upstream license and source |
+| --- | --- | --- |
+| LibreSpeed Go（含上游测速界面） | 1.1.6 | [LGPL-3.0 license](https://github.com/librespeed/speedtest-go/blob/v1.1.6/LICENSE), [source](https://github.com/librespeed/speedtest-go/tree/v1.1.6) |
+| OpenList | 4.2.7 | [AGPL-3.0 license](https://github.com/OpenListTeam/OpenList/blob/v4.2.7/LICENSE), [source](https://github.com/OpenListTeam/OpenList/tree/v4.2.7) |
+| Loyalsoldier GeoIP / GeoSite | 202610172205 | [GPL-3.0 license](https://github.com/Loyalsoldier/v2ray-rules-dat/blob/202610172205/LICENSE), [source and data provenance](https://github.com/Loyalsoldier/v2ray-rules-dat/tree/202610172205) |
+
+项目自有首页只调用独立测速服务，不复制其前端实现；OpenList 保留原生界面和账号权限模型。上游许可证、版权声明和数据来源以各固定版本仓库为准。

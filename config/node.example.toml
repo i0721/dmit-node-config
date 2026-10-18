@@ -1,4 +1,7 @@
 schema_version = 1
+# Optional CN routing and website services are opt-in and absent in legacy
+# configurations. See docs/cn-warp-web-services.md for their shared model and
+# locked defaults; the deployment wizard collects these choices once.
 
 [node]
 # Tutorial names in docs/deployment.md; replace documentation IPs before apply.

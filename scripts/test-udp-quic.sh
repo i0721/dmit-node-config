@@ -4,6 +4,9 @@ set -euo pipefail
 server=${1:?isolated server container}
 image=${2:?same distro client image}
 work=${3:?private driver work directory}
+web_domain=${NODECTL_TEST_WEB_DOMAIN:-node.integration.test}
+web_text=${NODECTL_TEST_WEB_TEXT:-integration-ready}
+[[ "$web_domain" =~ ^[a-z0-9.-]+$ ]] || exit 1
 umask 077
 client=
 cleanup() {
@@ -40,13 +43,13 @@ start_client() {
   docker exec "$client" bash -lc "gateway=\$(ip -4 route show default | awk '{print \$3}'); ip route add $server_ip/32 via \"\$gateway\" dev eth0; ip route replace default dev verify0; ip route get 198.18.0.2 | grep -q 'dev verify0'; ip route get $server_ip | grep -q 'dev eth0'"
 }
 web() {
-  docker run --rm --network "container:$client" -v "$work/ca.crt:/ca.crt:ro" nodectl-integration-h3 --noproxy '*' --fail --silent --show-error --max-time 10 --cacert /ca.crt --resolve node.integration.test:443:198.18.0.2 "$@" https://node.integration.test/
+  docker run --rm --network "container:$client" -v "$work/ca.crt:/ca.crt:ro" nodectl-integration-h3 --noproxy '*' --fail --silent --show-error --max-time 10 --cacert /ca.crt --resolve "$web_domain:443:198.18.0.2" "$@" "https://$web_domain/"
 }
 for engine in xray mihomo; do
   for kind in xhttp-chrome ws reality; do
     [ -z "${NODECTL_PROTOCOL_ONLY:-}" ] || [ "$NODECTL_PROTOCOL_ONLY" = "$engine:$kind" ] || continue
     start_client "$engine" "$kind"
-    web --socks5 127.0.0.1:10811 | grep -q integration-ready
+    web --socks5 127.0.0.1:10811 | grep -Fq "$web_text"
     # SOCKS UDP accepts four independent DNS replies and varying-size echoes.
     port=10811; [ "$engine" != xray ] || port=10810
     docker exec "$client" /integration-target/debug/repo-tools udp-probe "$port" 198.18.0.2 53 dns

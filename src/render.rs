@@ -3,7 +3,7 @@ use anyhow::{Result, ensure};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-pub const TEMPLATE_VERSION: &str = "3";
+pub const TEMPLATE_VERSION: &str = "4";
 
 pub fn template(source: &str, vars: &BTreeMap<&str, String>) -> Result<String> {
     let mut env = minijinja::Environment::new();
@@ -71,9 +71,11 @@ pub fn xray(c: &Config, s: &Secrets) -> Value {
         direct["settings"] = json!({"finalRules":[{"action":"allow","ip":["127.0.0.1/32"],"port":"9443"},{"action":"allow","ip":["198.18.0.2/32"],"port":"53,443,14444"}]});
         direct
     };
-    json!({"log":{"loglevel":"warning","access":format!("{}/xray/access.log",c.runtime.log_root),
+    let mut rendered = json!({"log":{"loglevel":"warning","access":format!("{}/xray/access.log",c.runtime.log_root),
         "error":format!("{}/xray/error.log",c.runtime.log_root)},"inbounds":inbounds,
-        "outbounds":[direct,{"tag":"block","protocol":"blackhole"}]})
+        "outbounds":[direct,{"tag":"block","protocol":"blackhole"}]});
+    crate::cn_warp::xray(c, &mut rendered);
+    rendered
 }
 
 pub fn outbound(c: &Config, s: &Secrets, kind: &str, fingerprint: &str) -> Result<Value> {
@@ -205,6 +207,14 @@ pub fn profiles(c: &Config, s: &Secrets) -> Result<Value> {
 }
 
 pub fn files(c: &Config, s: &Secrets) -> Result<BTreeMap<String, Vec<u8>>> {
+    files_with_geodata(c, s, None)
+}
+
+pub fn files_with_geodata(
+    c: &Config,
+    s: &Secrets,
+    geodata: Option<&std::path::Path>,
+) -> Result<BTreeMap<String, Vec<u8>>> {
     let p = &c.ports;
     let addresses = if c.node.ipv6.is_empty() {
         vec!["".to_owned()]
@@ -226,7 +236,7 @@ pub fn files(c: &Config, s: &Secrets) -> Result<BTreeMap<String, Vec<u8>>> {
         }
         lines.join("\n")
     };
-    let vars = BTreeMap::from([
+    let mut vars = BTreeMap::from([
         ("NGINX_USER", c.runtime.nginx_user.clone()),
         ("XRAY_USER", c.runtime.xray_user.clone()),
         ("LOG_ROOT", c.runtime.log_root.clone()),
@@ -340,6 +350,19 @@ pub fn files(c: &Config, s: &Secrets) -> Result<BTreeMap<String, Vec<u8>>> {
                 .to_string(),
         ),
     ]);
+    crate::web_services::nginx(c, &mut vars)?;
+    vars.insert(
+        "CN_UNIT",
+        if c.routes_cn() {
+            "Wants=usque-cn.service\nAfter=usque-cn.service"
+        } else {
+            ""
+        }
+        .into(),
+    );
+    vars.insert("CN_ASSETS", if c.routes_cn() {
+        format!("Environment=XRAY_LOCATION_ASSET={}\nCapabilityBoundingSet=CAP_NET_RAW\nAmbientCapabilities=CAP_NET_RAW", crate::cn_warp::runtime_asset_dir()?.display())
+    } else {String::new()});
     let operations = operations(c);
     let mut files = BTreeMap::from([
         ("xray.json".into(), serde_json::to_vec_pretty(&xray(c, s))?),
@@ -361,7 +384,7 @@ pub fn files(c: &Config, s: &Secrets) -> Result<BTreeMap<String, Vec<u8>>> {
         ("nginx.conf", include_str!("../templates/nginx.conf.tpl")),
         (
             "systemd/xray.service",
-            include_str!("../templates/xray.service.tpl"),
+            include_str!("../templates/xray.v4.service.tpl"),
         ),
         (
             "systemd/nginx.service",
@@ -380,6 +403,8 @@ pub fn files(c: &Config, s: &Secrets) -> Result<BTreeMap<String, Vec<u8>>> {
             include_bytes!("../templates/nodectl-share.service.tpl").to_vec(),
         );
     }
+    crate::cn_warp::files(c, &mut files, geodata)?;
+    crate::web_services::files(c, &mut files)?;
     Ok(files)
 }
 

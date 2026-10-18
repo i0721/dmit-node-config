@@ -48,6 +48,7 @@ bash dmitserverconfig-setup.sh
 | 手动分层操作与字段 | [高级部署参考](docs/deployment.md)、[配置说明](docs/configuration.md) |
 | 图解与故障定位 | [脱敏 DNS 图解](docs/cloudflare-screenshots.md)、[排错](docs/troubleshooting.md) |
 | 实现与贡献 | [架构](docs/architecture.md)、[安全](docs/security.md)、[贡献](CONTRIBUTING.md) |
+| 0.5 开发预览（尚未发布） | [独立 CN WARP 与网站服务](docs/cn-warp-web-services.md)、[阶段验收](docs/defect/12-cn-warp-web-services-acceptance.md) |
 
 公开教程使用 example.com 和保留地址；脱敏图片不是生产验收证据。凭据与原始环境记录不随仓库发布。
 

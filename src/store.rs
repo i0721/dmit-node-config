@@ -215,16 +215,22 @@ impl Store {
             && ["0.1.0", "0.2.0"].contains(&manifest.generator_version.as_str());
         let v2 = manifest.template_version == "2"
             && ["0.3.0", "0.3.1"].contains(&manifest.generator_version.as_str());
+        let v3 = manifest.template_version == "3" && manifest.generator_version == "0.4.0";
         ensure!(
             manifest.schema_version == 1
                 && (legacy
                     || v2
+                    || v3
                     || (manifest.template_version == render::TEMPLATE_VERSION
-                        && manifest.generator_version == "0.4.0")),
+                        && manifest.generator_version == "0.5.0")),
             "Release requires its original nodectl/template version"
         );
         check_private(&path.join("source"), true)?;
         let (c, s) = config::load(&path.join("source"))?;
+        ensure!(
+            !(legacy || v2 || v3) || (c.cn_warp.is_none() && c.web_services.is_none()),
+            "Legacy release contains unsupported CN WARP or website fields"
+        );
         ensure!(
             !(legacy || v2) || c.distribution.is_none(),
             "Legacy release contains unsupported distribution fields"
@@ -241,8 +247,10 @@ impl Store {
             crate::render_legacy::files(&c, &s)?
         } else if v2 {
             crate::render_v2::files(&c, &s)?
+        } else if v3 {
+            crate::render_v3::files(&c, &s)?
         } else {
-            render::files(&c, &s)?
+            render::files_with_geodata(&c, &s, Some(&path.join("geodata")))?
         };
         ensure!(
             manifest.files.len() == expected.len(),

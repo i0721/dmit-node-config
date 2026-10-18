@@ -3,6 +3,7 @@ use anyhow::{Context, Result, bail, ensure};
 use regex::Regex;
 use serde_json::{Value, json};
 #[path = "../artifacts.rs"]
+#[allow(dead_code)]
 mod artifacts;
 #[path = "../protocol_tools.rs"]
 mod protocol_tools;
@@ -432,6 +433,7 @@ fn run() -> Result<()> {
             );
         }
         "udp-echo" => protocol_tools::echo(arg(&args, 1)?, false)?,
+        "tcp-peer-marker" => protocol_tools::tcp_peer_marker(arg(&args, 1)?)?,
         "hello-relay" => protocol_tools::hello_relay(Path::new(arg(&args, 1)?))?,
         "legacy-inputs-fixture" => protocol_tools::legacy_inputs(Path::new(arg(&args, 1)?))?,
         "hello-check" => protocol_tools::hello_check(Path::new(arg(&args, 1)?), arg(&args, 2)?)?,

@@ -278,6 +278,45 @@ pub fn doctor(store: &Store, as_json: bool) -> Result<()> {
                     "Register usque once, protect its JSON as 0600, and enable /dev/net/tun; do not change the default route.",
                 );
             }
+            if c.routes_cn() {
+                add(
+                    &mut items,
+                    "cn-warp-independent",
+                    (|| {
+                        crate::cn_warp::platform(&c)?;
+                        crate::cn_warp::credentials(&c)?;
+                        if managed {
+                            crate::cn_warp::runtime_assets_healthy()?;
+                            anyhow::ensure!(
+                                crate::cn_route::Policy::from(c.cn_warp.as_ref().unwrap())
+                                    .guarded()?,
+                                "CN guard is missing"
+                            );
+                            host::command("systemctl", &["is-active", "--quiet", "usque-cn"])?;
+                        }
+                        Ok(())
+                    })(),
+                    "Preserve the first WARP profile; recover the independent CN service and its owned policy without changing native routes.",
+                );
+            }
+            if c.serves_web() {
+                add(
+                    &mut items,
+                    "website-services",
+                    (|| {
+                        crate::web_services::verify_binaries()?;
+                        if managed {
+                            for name in host::WEB_SERVICES {
+                                host::command("systemctl", &["is-active", "--quiet", name])?;
+                            }
+                            crate::web_services::health(&c)?;
+                            crate::web_services::public_health(&c)?;
+                        }
+                        Ok(())
+                    })(),
+                    "Recover the managed website services and database transaction; retain uploaded files and administrator credentials.",
+                );
+            }
         }
     }
     let healthy = items.iter().all(|f| f.ok);
@@ -316,10 +355,24 @@ pub fn status(store: &Store, as_json: bool) -> Result<()> {
     let current = store.pointer("current");
     let current_valid = current.is_ok();
     let current = current.ok().flatten();
-    let distribution_enabled = current
+    let deployed = current
         .as_ref()
         .and_then(|id| store.verify(id).ok())
-        .is_some_and(|(c, _)| c.distributes());
+        .map(|(c, _)| c);
+    let distribution_enabled = deployed.as_ref().is_some_and(|c| c.distributes());
+    let cn_warp_enabled = deployed.as_ref().is_some_and(|c| c.routes_cn());
+    let web_services_enabled = deployed.as_ref().is_some_and(|c| c.serves_web());
+    for name in cn_warp_enabled.then_some("usque-cn").into_iter().chain(
+        web_services_enabled
+            .then_some(host::WEB_SERVICES)
+            .into_iter()
+            .flatten(),
+    ) {
+        let state = host::command("systemctl", &["show", name, "-p", "ActiveState", "--value"])
+            .map(|v| v.trim().to_owned())
+            .unwrap_or_else(|_| "unavailable".into());
+        services.insert(name, state);
+    }
     let previous = store.pointer("previous").ok().flatten();
     let checked = current
         .as_ref()
@@ -338,7 +391,7 @@ pub fn status(store: &Store, as_json: bool) -> Result<()> {
         "previous":previous,"pending_transaction":store.state_dir.join("transaction.json").exists(),
         "pending_uninstall":store.state_dir.join("uninstall.json").exists(),
         "pending_provisioning":store.state_dir.join("deployment.json").exists(),
-        "check_receipt_present":checked,"last_check_unix_seconds":checked_at,"certificates_valid_24h":certs,"services":services,"distribution_enabled":distribution_enabled,"distribution_access":crate::share::access_status(store)});
+        "check_receipt_present":checked,"last_check_unix_seconds":checked_at,"certificates_valid_24h":certs,"services":services,"distribution_enabled":distribution_enabled,"distribution_access":crate::share::access_status(store),"cn_warp_enabled":cn_warp_enabled,"web_services_enabled":web_services_enabled,"website_maintenance":Path::new(crate::web_services::MAINTENANCE_FILE).exists()});
     if as_json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {

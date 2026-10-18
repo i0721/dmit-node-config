@@ -268,6 +268,22 @@ pub fn hello_check(root: &Path, kind: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn tcp_peer_marker(address: &str) -> Result<()> {
+    for stream in TcpListener::bind(address)?.incoming() {
+        let mut stream = stream?;
+        stream.set_read_timeout(Some(Duration::from_secs(3)))?;
+        let mut request = [0; 4096];
+        let _ = stream.read(&mut request);
+        let body = stream.peer_addr()?.ip().to_string();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )?;
+    }
+    Ok(())
+}
+
 pub fn echo(address: &str, dns: bool) -> Result<()> {
     let socket = UdpSocket::bind(address)?;
     let mut buf = [0u8; 65535];

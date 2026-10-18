@@ -1,4 +1,6 @@
 mod artifacts;
+mod cn_route;
+mod cn_warp;
 mod config;
 mod deploy;
 mod diagnostics;
@@ -10,6 +12,10 @@ mod render;
 mod render_legacy;
 #[allow(dead_code)]
 mod render_v2;
+#[allow(dead_code)]
+mod render_v3;
+#[cfg(test)]
+mod service_tests;
 mod setup;
 mod share;
 mod share_http;
@@ -17,6 +23,7 @@ mod store;
 #[cfg(test)]
 mod tests;
 mod upgrade;
+mod web_services;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -35,6 +42,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Action {
+    /// Manage the deployed websites and recover initial OpenList access.
+    Web {
+        #[command(subcommand)]
+        action: web_services::Action,
+    },
+    /// Internal marked-route lifecycle for the managed independent tunnel.
+    #[command(hide = true)]
+    CnRoute(cn_route::Command),
     /// Aggregate environment checks without changing the host.
     Doctor {
         #[arg(long)]
@@ -134,6 +149,8 @@ fn run() -> Result<()> {
     }
     let store = store::Store::new(cli.config_dir, cli.state_dir)?;
     match cli.command {
+        Action::Web { action } => web_services::run(&store, action)?,
+        Action::CnRoute(command) => cn_route::run(command)?,
         Action::Doctor { json } => diagnostics::doctor(&store, json)?,
         Action::Status { json } => diagnostics::status(&store, json)?,
         Action::Setup(setup) => setup::run(&store, setup)?,

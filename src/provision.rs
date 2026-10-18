@@ -386,7 +386,7 @@ pub fn dependencies(c: &Config, work: &Path) -> Result<Option<String>> {
             host::command("install", &["-d", "-m", "0755", path])?;
         }
     }
-    if c.warp.enabled && !Path::new(&c.runtime.usque_binary).exists() {
+    if (c.warp.enabled || c.routes_cn()) && !Path::new(&c.runtime.usque_binary).exists() {
         let go = ensure_go(work)?;
         let source = work.join("usque-source");
         locked_source("usque", &source)?;
@@ -406,6 +406,32 @@ pub fn dependencies(c: &Config, work: &Path) -> Result<Option<String>> {
             &[("CGO_ENABLED", "0")],
         )?;
         host::command("chmod", &["0755", &c.runtime.usque_binary])?;
+    }
+    if c.routes_cn() {
+        let cn = c.cn_warp.as_ref().unwrap();
+        store::private_dir(Path::new(&cn.geodata_dir))?;
+        let locks: toml::Value = toml::from_str(include_str!("../versions.lock.toml"))?;
+        for name in ["geoip", "geosite"] {
+            let target = Path::new(&cn.geodata_dir).join(format!("{name}.dat"));
+            if target.exists() {
+                store::check_private(&target, false)?;
+                ensure!(
+                    Some(store::file_digest(&target)?.as_str())
+                        == locks["geodata"][format!("{name}_sha256")].as_str(),
+                    "Installed geodata differs from the pinned version; retain it and inspect before replacement"
+                );
+            } else {
+                store::atomic_write(&target, &artifacts::locked_asset("geodata", name)?)?;
+            }
+        }
+    }
+    if c.serves_web() {
+        for (component, binary) in [
+            ("librespeed", "/usr/local/bin/speedtest-backend"),
+            ("openlist", "/usr/local/bin/openlist"),
+        ] {
+            artifacts::install_component(component, Path::new(binary))?;
+        }
     }
     Ok(installed_default)
 }
@@ -957,32 +983,46 @@ fn preserve_acme_key(home: &Path, main: &str, dir: &Path, length: &str) -> Resul
     Ok(actual.into())
 }
 pub fn warp(c: &Config, args: &Deploy) -> Result<()> {
-    if !c.warp.enabled {
+    if !c.warp.enabled && !c.routes_cn() {
         return Ok(());
     }
     ensure!(
         Path::new("/dev/net/tun").exists(),
         "WARP requires /dev/net/tun"
     );
-    let path = Path::new(&c.warp.config_file);
-    if path.exists() {
+    let configs = c
+        .warp
+        .enabled
+        .then_some(c.warp.config_file.as_str())
+        .into_iter()
+        .chain(
+            c.cn_warp
+                .as_ref()
+                .filter(|cn| cn.enabled)
+                .map(|cn| cn.config_file.as_str()),
+        );
+    for config in configs {
+        let path = Path::new(config);
+        if path.exists() {
+            store::check_private(path, false)?;
+            let _: Value =
+                serde_json::from_slice(&fs::read(path)?).context("Invalid WARP credentials")?;
+            continue;
+        }
+        ensure!(
+            args.accept_warp_terms,
+            "New WARP registration requires --accept-warp-terms"
+        );
+        store::private_dir(path.parent().context("WARP config parent")?)?;
+        long_command(
+            &c.runtime.usque_binary,
+            &["-c", config, "register", "--accept-tos"],
+            &[],
+        )?;
+        host::command("chmod", &["0600", config])?;
         store::check_private(path, false)?;
-        let _: Value =
-            serde_json::from_slice(&fs::read(path)?).context("Invalid WARP credentials")?;
-        return Ok(());
     }
-    ensure!(
-        args.accept_warp_terms,
-        "New WARP registration requires --accept-warp-terms"
-    );
-    store::private_dir(path.parent().context("WARP config parent")?)?;
-    long_command(
-        &c.runtime.usque_binary,
-        &["-c", &c.warp.config_file, "register"],
-        &[],
-    )?;
-    host::command("chmod", &["0600", &c.warp.config_file])?;
-    store::check_private(path, false)?;
+    crate::cn_warp::credentials(c)?;
     Ok(())
 }
 pub fn warp_probe(c: &Config) -> Result<()> {

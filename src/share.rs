@@ -220,6 +220,7 @@ pub(crate) fn deployment_result(store: &Store) -> Result<()> {
     println!(
         "Successful deployment: {id}\nServices: protocol health checks passed\nManage: nodectl status | nodectl doctor | nodectl rollback"
     );
+    crate::web_services::deployment_result(&c, true)?;
     if !c.distributes() {
         return Ok(());
     }

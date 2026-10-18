@@ -14,7 +14,7 @@ printf '%s' "$fixture_token" > "$work/token"
 original=$(readlink /var/lib/dmit-node/current)
 original_token=$(sha256sum /var/lib/dmit-node/distribution/access.json)
 wizard="env NODECTL_TEST_DNS=yes nodectl --state-dir '$work/state' deploy --wizard --distribution true --access-token-file '$work/token' --skip-dependencies --manual-certificates --takeover --probe-url https://127.0.0.1:9443/"
-answers() { printf '\n\n\n\n\n\n\n\n\n\nmanual\n\n\n%s\n' "$1"; }
+answers() { printf '\n\n\n\n\n\n\n\n\n\nfalse\nfalse\nmanual\n\n\n%s\n' "$1"; }
 if answers no | script -q -e -c "$wizard" "$work/cancel.tty" >/dev/null; then exit 1; fi
 test ! -e "$work/state/distribution/access.json"
 test "$(readlink /var/lib/dmit-node/current)" = "$original"

@@ -16,4 +16,6 @@
 **/cf-acme.env
 **/account.conf
 **/usque-config.json
+# Operator-provided reference script; audited locally, never shipped/executed.
+/tmp/usque_v0.2.0.sh.txt
 

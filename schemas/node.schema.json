@@ -17,6 +17,16 @@
     "clients": {
       "$ref": "#/definitions/Clients"
     },
+    "cn_warp": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/CnWarp"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "distribution": {
       "anyOf": [
         {
@@ -60,6 +70,16 @@
     "warp": {
       "$ref": "#/definitions/Warp"
     },
+    "web_services": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/WebServices"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "website": {
       "$ref": "#/definitions/Website"
     }
@@ -94,6 +114,48 @@
           "minimum": 0.0
         },
         "xhttp_weight": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "CnWarp": {
+      "type": "object",
+      "required": [
+        "config_file",
+        "enabled",
+        "geodata_dir",
+        "interface",
+        "routing_table",
+        "rule_priority",
+        "socket_mark"
+      ],
+      "properties": {
+        "config_file": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "geodata_dir": {
+          "type": "string"
+        },
+        "interface": {
+          "type": "string"
+        },
+        "routing_table": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "rule_priority": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "socket_mark": {
           "type": "integer",
           "format": "uint32",
           "minimum": 0.0
@@ -303,6 +365,44 @@
         },
         "take_over_default_route": {
           "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "WebServices": {
+      "type": "object",
+      "required": [
+        "download_size_mib",
+        "enabled",
+        "librespeed_port",
+        "openlist_data_dir",
+        "openlist_files_dir",
+        "openlist_port"
+      ],
+      "properties": {
+        "download_size_mib": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "librespeed_port": {
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0.0
+        },
+        "openlist_data_dir": {
+          "type": "string"
+        },
+        "openlist_files_dir": {
+          "type": "string"
+        },
+        "openlist_port": {
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0.0
         }
       },
       "additionalProperties": false

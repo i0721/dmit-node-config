@@ -44,6 +44,12 @@ pub struct Deploy {
     /// Enable protected node distribution; missing legacy fields remain disabled.
     #[arg(long, action=clap::ArgAction::Set)]
     pub distribution: Option<bool>,
+    /// Route CN domains and IPs through a second independent usque instance.
+    #[arg(long, action=clap::ArgAction::Set)]
+    pub cn_warp: Option<bool>,
+    /// Enable the LibreSpeed landing page and OpenList files virtual host.
+    #[arg(long, action=clap::ArgAction::Set)]
+    pub web_services: Option<bool>,
     /// Optional initial access token in an owner-only file; use share rotate later.
     #[arg(long)]
     pub access_token_file: Option<PathBuf>,
@@ -295,6 +301,20 @@ pub(crate) fn candidate(store: &Store, args: &Deploy) -> Result<(Config, Secrets
     {
         c.distribution = Some(config::Distribution { enabled });
     }
+    if let Some(enabled) = args.cn_warp
+        && (enabled || c.cn_warp.is_some())
+    {
+        c.cn_warp
+            .get_or_insert_with(|| config::CnWarp::managed(enabled))
+            .enabled = enabled;
+    }
+    if let Some(enabled) = args.web_services
+        && (enabled || c.web_services.is_some())
+    {
+        c.web_services
+            .get_or_insert_with(|| config::WebServices::managed(enabled))
+            .enabled = enabled;
+    }
     if let Some(v) = args.http_port {
         c.ports.http = v;
     }
@@ -339,6 +359,26 @@ pub(crate) fn candidate(store: &Store, args: &Deploy) -> Result<(Config, Secrets
             .parse()?;
             if enabled || c.distribution.is_some() {
                 c.distribution = Some(config::Distribution { enabled });
+            }
+            let enabled = prompt(
+                "CN traffic via a second isolated WARP (true/false)",
+                &c.routes_cn().to_string(),
+            )?
+            .parse()?;
+            if enabled || c.cn_warp.is_some() {
+                c.cn_warp
+                    .get_or_insert_with(|| config::CnWarp::managed(enabled))
+                    .enabled = enabled;
+            }
+            let enabled = prompt(
+                "Speedtest, LibreSpeed and OpenList websites (true/false)",
+                &c.serves_web().to_string(),
+            )?
+            .parse()?;
+            if enabled || c.web_services.is_some() {
+                c.web_services
+                    .get_or_insert_with(|| config::WebServices::managed(enabled))
+                    .enabled = enabled;
             }
         }
     }
@@ -437,6 +477,22 @@ fn backup_paths(store: &Store, c: &Config) -> Vec<PathBuf> {
     if c.distribution.is_some() {
         paths.push(PathBuf::from(host::SHARE_ENTRY));
     }
+    if let Some(cn) = c.cn_warp.as_ref().filter(|cn| cn.enabled) {
+        paths.extend([
+            PathBuf::from(&cn.config_file),
+            PathBuf::from(&cn.geodata_dir),
+        ]);
+    }
+    if let Some(web) = c.web_services.as_ref().filter(|web| web.enabled) {
+        paths.extend([
+            PathBuf::from("/usr/local/bin/speedtest-backend"),
+            PathBuf::from("/usr/local/bin/openlist"),
+            PathBuf::from("/usr/local/bin/speedtest-backend.nodectl-sha256"),
+            PathBuf::from("/usr/local/bin/openlist.nodectl-sha256"),
+            PathBuf::from("/etc/nodectl-services"),
+            PathBuf::from(&web.openlist_data_dir),
+        ]);
+    }
     paths.sort();
     paths.dedup();
     paths
@@ -448,11 +504,49 @@ fn completed_paths(store: &Store, c: &Config) -> Vec<PathBuf> {
             .into_iter()
             .map(|(path, _)| PathBuf::from(path)),
     );
+    if c.serves_web() {
+        paths.extend(
+            host::WEB_ENTRIES
+                .into_iter()
+                .map(|(path, _)| PathBuf::from(path)),
+        );
+    }
+    if c.routes_cn() {
+        paths.extend(
+            [
+                "/etc/systemd/system/usque-cn.service",
+                "/etc/xray/geoip.dat",
+                "/etc/xray/geosite.dat",
+            ]
+            .into_iter()
+            .map(PathBuf::from),
+        );
+    }
     paths.sort();
     paths.dedup();
     paths
 }
 fn inventory(store: &Store, c: &Config) -> Result<Value> {
+    for path in backup_paths(store, c) {
+        ensure!(
+            path.is_absolute()
+                && path.components().count() >= 3
+                && !store.state_dir.starts_with(&path),
+            "Deployment backup path overlaps the state directory or an unsafe filesystem root"
+        );
+    }
+    if let Some(web) = c.web_services.as_ref().filter(|web| web.enabled) {
+        for path in [&web.openlist_data_dir, &web.openlist_files_dir] {
+            ensure!(
+                !config::overlap(path, store.state_dir.to_str().context("State path")?)
+                    && !config::overlap(
+                        path,
+                        store.config_dir.to_str().context("Configuration path")?
+                    ),
+                "OpenList data cannot overlap nodectl state or configuration"
+            );
+        }
+    }
     ensure!(
         cfg!(target_os = "linux"),
         "Deployment planning requires Linux/systemd"
@@ -464,6 +558,7 @@ fn inventory(store: &Store, c: &Config) -> Result<Value> {
         "Automatic deployment supports Debian/Ubuntu only; manual mode remains available"
     );
     host::command("systemctl", &["show-environment"])?;
+    crate::cn_warp::platform(c)?;
     let addresses: Value = serde_json::from_str(&host::command("ip", &["-j", "address", "show"])?)?;
     for wanted in c.ips() {
         ensure!(
@@ -516,6 +611,13 @@ fn inventory(store: &Store, c: &Config) -> Result<Value> {
     for service in host::SERVICES
         .into_iter()
         .chain(c.distribution.is_some().then_some(host::SHARE_SERVICE))
+        .chain(c.routes_cn().then_some("usque-cn"))
+        .chain(
+            c.serves_web()
+                .then_some(host::WEB_SERVICES)
+                .into_iter()
+                .flatten(),
+        )
     {
         services.insert(
             service,
@@ -563,6 +665,10 @@ struct Journal {
     pending_dns: Option<Change>,
     routes4: String,
     routes6: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cn_policy: Option<crate::cn_route::Policy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    storage_metadata: Option<crate::web_services::StorageMetadata>,
     phase: String,
     config_existed: bool,
     services: BTreeMap<String, host::Service>,
@@ -571,10 +677,105 @@ struct Journal {
     #[serde(default)]
     completed_release: Option<String>,
 }
+
+fn restore_service_states(services: &BTreeMap<String, host::Service>) -> Result<()> {
+    for (name, expected) in services {
+        ensure!(
+            [
+                "nginx",
+                "xray",
+                "usque-warp",
+                "usque-cn",
+                "librespeed",
+                "openlist",
+                host::SHARE_SERVICE
+            ]
+            .contains(&name.as_str()),
+            "Unexpected recovery service"
+        );
+        let current = host::service_state(name)?;
+        if current.active != expected.active {
+            host::command(
+                "systemctl",
+                &[if expected.active { "start" } else { "stop" }, name],
+            )?;
+        }
+        let current = host::service_state(name)?;
+        if current.enabled != expected.enabled {
+            if current.enabled == "enabled-runtime" {
+                host::command("systemctl", &["disable", "--runtime", name])?;
+            } else if current.enabled == "enabled" {
+                host::command("systemctl", &["disable", name])?;
+            }
+            match expected.enabled.as_str() {
+                "enabled" => {
+                    host::command("systemctl", &["enable", name])?;
+                }
+                "enabled-runtime" => {
+                    host::command("systemctl", &["enable", "--runtime", name])?;
+                }
+                _ => {}
+            }
+        }
+        let actual = host::service_state(name)?;
+        ensure!(
+            actual.active == expected.active && actual.enabled == expected.enabled,
+            "Original service state could not be restored for {name}"
+        );
+    }
+    Ok(())
+}
+
+/// Host-only recovery cannot restart a database until its provisioning material
+/// has been restored. The outer recovery journal remains the authority.
+pub(crate) fn database_recovery_pending(store: &Store) -> Result<bool> {
+    let path = store.state_dir.join("deployment.json");
+    if !path.exists() {
+        return Ok(false);
+    }
+    store::check_private(&path, false)?;
+    let journal: Journal = serde_json::from_slice(&fs::read(path)?)?;
+    Ok(journal.schema_version == 3
+        && !["materials-restored", "restored", "committed"].contains(&journal.phase.as_str()))
+}
+
+pub(crate) fn service_before_preparation(
+    store: &Store,
+    name: &str,
+) -> Result<Option<host::Service>> {
+    let path = store.state_dir.join("deployment.json");
+    if !path.exists() {
+        return Ok(None);
+    }
+    store::check_private(&path, false)?;
+    let journal: Journal = serde_json::from_slice(&fs::read(path)?)?;
+    Ok((journal.schema_version == 3)
+        .then(|| journal.services.get(name).cloned())
+        .flatten())
+}
+fn same_native_routes(
+    before: &str,
+    after: &str,
+    policy: Option<&crate::cn_route::Policy>,
+) -> Result<bool> {
+    if let Some(policy) = policy {
+        Ok(policy.without_routes(before)? == policy.without_routes(after)?)
+    } else {
+        Ok(before == after)
+    }
+}
 fn save(store: &Store, journal: &Journal) -> Result<()> {
     store::atomic_write(
         &store.state_dir.join("deployment.json"),
         &serde_json::to_vec_pretty(journal)?,
+    )
+}
+fn save_phase(store: &Store, journal: &Journal, phase: &str) -> Result<()> {
+    let mut value = serde_json::to_value(journal)?;
+    value["phase"] = json!(phase);
+    store::atomic_write(
+        &store.state_dir.join("deployment.json"),
+        &serde_json::to_vec_pretty(&value)?,
     )
 }
 fn recovery_paths(store: &Store, journal: &Journal) -> Result<Vec<PathBuf>> {
@@ -583,6 +784,11 @@ fn recovery_paths(store: &Store, journal: &Journal) -> Result<Vec<PathBuf>> {
         1 => {
             ensure!(
                 journal.config.vless.is_none()
+                    && journal.config.distribution.is_none()
+                    && journal.config.cn_warp.is_none()
+                    && journal.config.web_services.is_none()
+                    && journal.cn_policy.is_none()
+                    && journal.storage_metadata.is_none()
                     && journal.after_files.is_none()
                     && journal.completed_release.is_none(),
                 "Legacy journal contains newer material fields"
@@ -591,7 +797,18 @@ fn recovery_paths(store: &Store, journal: &Journal) -> Result<Vec<PathBuf>> {
             // original backup list; all recorded digests remain mandatory.
             paths.retain(|p| p != &Path::new(&journal.config.website.root).join("index.html"));
         }
-        2 => {}
+        2 => {
+            ensure!(
+                !journal.config.serves_web() && journal.storage_metadata.is_none(),
+                "Website lifecycle requires recovery format 3"
+            );
+        }
+        3 => {
+            ensure!(
+                journal.config.serves_web(),
+                "Website journal has no website configuration"
+            );
+        }
         _ => bail!("Unknown deployment recovery format"),
     }
     Ok(paths)
@@ -766,7 +983,7 @@ pub fn run(store: &Store, mut args: Deploy) -> Result<()> {
                 args.accept_ca_terms = prompt("Accept Let's Encrypt subscriber agreement https://letsencrypt.org/repository/ (true/false)", "false")?.parse()?;
             }
         }
-        if args.wizard && c.warp.enabled && !Path::new(&c.warp.config_file).exists() {
+        if args.wizard && crate::cn_warp::needs_registration(&c) {
             args.accept_warp_terms = prompt("Accept Cloudflare WARP terms https://www.cloudflare.com/application/terms/ (true/false)", "false")?.parse()?;
         }
         if args.wizard
@@ -876,8 +1093,8 @@ pub fn run(store: &Store, mut args: Deploy) -> Result<()> {
             required_actions.push("Review CA terms and supply --accept-ca-terms for a new account");
         }
     }
-    if c.warp.enabled && !Path::new(&c.warp.config_file).exists() && !args.accept_warp_terms {
-        required_actions.push("Review WARP terms and supply --accept-warp-terms for new device registration, or select --warp false");
+    if crate::cn_warp::needs_registration(&c) && !args.accept_warp_terms {
+        required_actions.push("Review WARP terms and supply --accept-warp-terms for new device registration, or disable each unregistered WARP profile (--warp false / --cn-warp false)");
     }
     let configuration_diff = if let Some(old) = &inherited {
         similar::TextDiff::from_lines(&toml::to_string_pretty(old)?, &toml::to_string_pretty(&c)?)
@@ -979,7 +1196,7 @@ pub fn run(store: &Store, mut args: Deploy) -> Result<()> {
         probe_url: args.probe_url.clone(),
     };
     let mut journal = Journal {
-        schema_version: 2,
+        schema_version: if c.serves_web() { 3 } else { 2 },
         backup: backup.clone(),
         config: c.clone(),
         previous: store.pointer("current")?,
@@ -990,34 +1207,76 @@ pub fn run(store: &Store, mut args: Deploy) -> Result<()> {
         pending_dns: None,
         routes4: host::default_routes(false)?,
         routes6: host::default_routes(true)?,
-        phase: "backed-up".into(),
+        cn_policy: host::managed_cn_policy(store, &c)?,
+        storage_metadata: crate::web_services::storage_metadata(&c)?,
+        phase: if c.serves_web() {
+            "snapshot-pending"
+        } else {
+            "backed-up"
+        }
+        .into(),
         config_existed: exists,
         services: host::SERVICES
             .into_iter()
             .chain(c.distribution.is_some().then_some(host::SHARE_SERVICE))
+            .chain(c.routes_cn().then_some("usque-cn"))
+            .chain(
+                c.serves_web()
+                    .then_some(host::WEB_SERVICES)
+                    .into_iter()
+                    .flatten(),
+            )
             .map(|name| Ok((name.to_owned(), host::service_state(name)?)))
             .collect::<Result<_>>()?,
         after_files: None,
         completed_release: None,
     };
-    for (i, path) in backup_paths(store, &c).into_iter().enumerate() {
-        let copy = backup.join(format!("file-{i}"));
-        let existed = fs::symlink_metadata(&path).is_ok();
-        if existed {
-            copy_tree(&path, &copy)?;
-        }
-        journal.files.push(Backup {
-            fingerprint: if existed {
-                fingerprint(&copy)?
-            } else {
-                Value::Null
-            },
-            path,
-            copy,
-            existed,
-        });
+    if journal.schema_version == 3 {
+        save(store, &journal)?;
     }
-    save(store, &journal)?;
+    let preparation = (|| -> Result<()> {
+        if journal.schema_version == 3 {
+            crate::web_services::begin_maintenance(store, &backup)?;
+            for name in ["nginx", "openlist", "librespeed"] {
+                if journal.services.get(name).is_some_and(|state| state.active) {
+                    host::command("systemctl", &["stop", name])?;
+                }
+            }
+            #[cfg(feature = "integration-test")]
+            if std::env::var("NODECTL_DEPLOY_FAILPOINT").as_deref() == Ok("website-snapshot") {
+                std::process::exit(87);
+            }
+        }
+        for (i, path) in backup_paths(store, &c).into_iter().enumerate() {
+            let copy = backup.join(format!("file-{i}"));
+            let existed = fs::symlink_metadata(&path).is_ok();
+            if existed {
+                copy_tree(&path, &copy)?;
+            }
+            journal.files.push(Backup {
+                fingerprint: if existed {
+                    fingerprint(&copy)?
+                } else {
+                    Value::Null
+                },
+                path,
+                copy,
+                existed,
+            });
+        }
+        journal.phase = "backed-up".into();
+        save(store, &journal)?;
+        Ok(())
+    })();
+    if let Err(error) = preparation {
+        if journal.schema_version == 3 {
+            restore_service_states(&journal.services)?;
+            crate::web_services::finish_maintenance(store, &backup)?;
+            fs::remove_file(store.state_dir.join("deployment.json"))?;
+        }
+        return Err(error)
+            .context("Consistent website backup preparation failed before material changes");
+    }
     #[cfg(feature = "integration-test")]
     if std::env::var("NODECTL_DEPLOY_FAILPOINT").as_deref() == Ok("journal") {
         bail!("Injected deployment journal interruption");
@@ -1040,6 +1299,7 @@ pub fn run(store: &Store, mut args: Deploy) -> Result<()> {
             }
             created_nginx_default = provision?;
         }
+        crate::web_services::prepare(&c)?;
         if exists {
             config::encryption_keys(&c, &mut s)?;
             config::validate(&c, &s)?;
@@ -1148,8 +1408,15 @@ pub fn run(store: &Store, mut args: Deploy) -> Result<()> {
             provision::renewal(&c, store, superseded_acme.as_deref())?;
         }
         ensure!(
-            journal.routes4 == host::default_routes(false)?
-                && journal.routes6 == host::default_routes(true)?,
+            same_native_routes(
+                &journal.routes4,
+                &host::default_routes(false)?,
+                journal.cn_policy.as_ref()
+            )? && same_native_routes(
+                &journal.routes6,
+                &host::default_routes(true)?,
+                journal.cn_policy.as_ref()
+            )?,
             "DMIT default routes changed"
         );
         if args.wizard {
@@ -1183,6 +1450,16 @@ pub fn run(store: &Store, mut args: Deploy) -> Result<()> {
             &records.join(format!("{release}.json")),
             &serde_json::to_vec_pretty(&journal)?,
         )?;
+        if journal.schema_version == 3 {
+            journal.phase = "committed".into();
+            save(store, &journal)?;
+            #[cfg(feature = "integration-test")]
+            if std::env::var("NODECTL_DEPLOY_FAILPOINT").as_deref() == Ok("website-committed") {
+                std::process::exit(87);
+            }
+            crate::web_services::finish_maintenance(store, &backup)?;
+            crate::web_services::public_health(&c)?;
+        }
         fs::remove_file(store.state_dir.join("deployment.json"))?;
         println!(
             "Deployment {release} completed; all three protocol handshakes passed. Backup: {}",
@@ -1196,6 +1473,18 @@ pub fn run(store: &Store, mut args: Deploy) -> Result<()> {
         Ok(())
     })();
     if let Err(error) = result {
+        if journal.schema_version == 3 && journal.phase == "committed" {
+            let path = store.state_dir.join("deployment.json");
+            if path.is_file() {
+                store::check_private(&path, false)?;
+                let saved: Journal = serde_json::from_slice(&fs::read(path)?)?;
+                if saved.phase == "committed" {
+                    bail!(
+                        "Deployment is committed; final maintenance cleanup requires recover. Program and journals retained: {error:#}"
+                    );
+                }
+            }
+        }
         // Service apply has its own transaction. Provisioning uses the saved journal.
         match restore(store, &journal, cf.as_ref()) {
             Ok(()) => bail!(
@@ -1228,7 +1517,19 @@ fn restore(store: &Store, journal: &Journal, cf: Option<&Cloudflare>) -> Result<
     }
     ensure!(
         journal.services.len()
-            == host::SERVICES.len() + usize::from(journal.config.distribution.is_some())
+            == host::SERVICES.len()
+                + usize::from(journal.config.distribution.is_some())
+                + usize::from(journal.config.routes_cn())
+                + if journal.config.serves_web() {
+                    host::WEB_SERVICES.len()
+                } else {
+                    0
+                }
+            && (!journal.config.serves_web()
+                || host::WEB_SERVICES
+                    .iter()
+                    .all(|name| journal.services.contains_key(*name)))
+            && (!journal.config.routes_cn() || journal.services.contains_key("usque-cn"))
             && (journal.config.distribution.is_none()
                 || journal.services.contains_key(host::SHARE_SERVICE))
             && host::SERVICES
@@ -1246,6 +1547,57 @@ fn restore(store: &Store, journal: &Journal, cf: Option<&Cloudflare>) -> Result<
         "Invalid recovery directory"
     );
     store::check_private(&journal.backup, true)?;
+    if journal.schema_version == 3
+        && ["snapshot-pending", "restored", "committed"].contains(&journal.phase.as_str())
+    {
+        let expected = if journal.phase == "committed" {
+            journal.completed_release.as_ref()
+        } else {
+            journal.previous.as_ref()
+        };
+        ensure!(
+            store.pointer("current")?.as_ref() == expected,
+            "Website finalization pointer differs from the recorded state"
+        );
+        if journal.phase == "snapshot-pending" {
+            ensure!(
+                journal.files.is_empty()
+                    && journal.dns.is_empty()
+                    && journal.pending_dns.is_none()
+                    && journal.after_files.is_none()
+                    && journal.completed_release.is_none(),
+                "Incomplete website backup journal has material mutations"
+            );
+            ensure!(
+                !store.state_dir.join("transaction.json").exists()
+                    && !store.state_dir.join("uninstall.json").exists(),
+                "Host recovery cannot be skipped during snapshot preparation"
+            );
+            restore_service_states(&journal.services)?;
+            ensure!(
+                journal.routes4 == host::default_routes(false)?
+                    && journal.routes6 == host::default_routes(true)?,
+                "Native routes drifted during website backup"
+            );
+            save_phase(store, journal, "restored")?;
+        } else if journal.phase == "restored" {
+            restore_service_states(&journal.services)?;
+            ensure!(
+                journal.routes4 == host::default_routes(false)?
+                    && journal.routes6 == host::default_routes(true)?,
+                "Restored website routes have drifted"
+            );
+        } else if journal.phase == "committed" {
+            let id = journal
+                .completed_release
+                .as_deref()
+                .context("Committed website deployment has no release")?;
+            host::verify_live_success(store, id)?;
+        }
+        crate::web_services::finish_maintenance(store, &journal.backup)?;
+        fs::remove_file(store.state_dir.join("deployment.json"))?;
+        return Ok(());
+    }
     let paths = journal
         .files
         .iter()
@@ -1270,6 +1622,12 @@ fn restore(store: &Store, journal: &Journal, cf: Option<&Cloudflare>) -> Result<
             );
         }
     }
+    if journal.schema_version == 3 {
+        crate::web_services::begin_maintenance(store, &journal.backup)?;
+        for name in ["xray", "nginx", "openlist", "librespeed"] {
+            host::stop_service(name)?;
+        }
+    }
     // Retain newly generated identities/certificates before undoing preparation,
     // so an operator can reuse a completed issuance/registration after failure.
     let retained = journal.backup.join("failed-material");
@@ -1283,6 +1641,11 @@ fn restore(store: &Store, journal: &Journal, cf: Option<&Cloudflare>) -> Result<
                 || file.path == Path::new(&journal.config.tls.domain_cert_dir)
                 || file.path == Path::new(&journal.config.tls.ip_cert_dir)
                 || file.path == Path::new(&journal.config.warp.config_file)
+                || journal
+                    .config
+                    .cn_warp
+                    .as_ref()
+                    .is_some_and(|cn| file.path == Path::new(&cn.config_file))
                 || file.path == Path::new("/root/.acme.sh");
             if relevant
                 && fs::symlink_metadata(&file.path).is_ok()
@@ -1327,6 +1690,13 @@ fn restore(store: &Store, journal: &Journal, cf: Option<&Cloudflare>) -> Result<
             copy_tree(&file.copy, &file.path)?;
         }
     }
+    if journal.schema_version == 3 {
+        crate::web_services::restore_storage_metadata(
+            &journal.config,
+            journal.storage_metadata.as_ref(),
+        )?;
+        save_phase(store, journal, "materials-restored")?;
+    }
     if store.state_dir.join("transaction.json").exists()
         || store.state_dir.join("uninstall.json").exists()
     {
@@ -1345,48 +1715,32 @@ fn restore(store: &Store, journal: &Journal, cf: Option<&Cloudflare>) -> Result<
             reference.binary = PathBuf::from(c.runtime.xray_binary);
             reference.sha256 = store::file_digest(&reference.binary)?;
             host::check(store, previous, reference)?;
-            host::apply(store, previous)?;
+            // Sharing is also backed up as deployment material. Its restored
+            // link can already name the previous snapshot while `current`
+            // still names the failed/new one. Authorize only this exact link
+            // from the validated journal; never approve arbitrary entry drift.
+            let sharing = journal
+                .files
+                .iter()
+                .find(|f| f.path == Path::new(host::SHARE_ENTRY));
+            let sharing_restored = if let Some(sharing) = sharing {
+                sharing.existed
+                    && sharing.fingerprint["link"]
+                        == json!(
+                            store
+                                .release(previous)?
+                                .join("systemd/nodectl-share.service")
+                        )
+                    && fingerprint(&sharing.path)? == sharing.fingerprint
+            } else {
+                false
+            };
+            host::apply_after_material_restore(store, previous, sharing_restored)?;
         } else if current.is_some() {
             host::uninstall(store, true)?;
         }
     }
-    for (name, expected) in &journal.services {
-        ensure!(
-            ["nginx", "xray", "usque-warp", host::SHARE_SERVICE].contains(&name.as_str()),
-            "Unexpected recovery service"
-        );
-        let active = host::command("systemctl", &["show", name, "-p", "ActiveState", "--value"])?
-            .trim()
-            == "active";
-        if active != expected.active {
-            host::command(
-                "systemctl",
-                &[if expected.active { "start" } else { "stop" }, name],
-            )?;
-        }
-        let actual = host::service_state(name)?;
-        if actual.enabled != expected.enabled {
-            if actual.enabled == "enabled-runtime" {
-                host::command("systemctl", &["disable", "--runtime", name])?;
-            } else if actual.enabled == "enabled" {
-                host::command("systemctl", &["disable", name])?;
-            }
-            match expected.enabled.as_str() {
-                "enabled" => {
-                    host::command("systemctl", &["enable", name])?;
-                }
-                "enabled-runtime" => {
-                    host::command("systemctl", &["enable", "--runtime", name])?;
-                }
-                _ => {}
-            }
-        }
-        let restored = host::service_state(name)?;
-        ensure!(
-            restored.active == expected.active && restored.enabled == expected.enabled,
-            "Original service state could not be fully restored for {name}"
-        );
-    }
+    restore_service_states(&journal.services)?;
     if let Some(change) = &journal.pending_dns {
         cf.context("DNS recovery requires Cloudflare token")?
             .restore_pending(change)?;
@@ -1400,6 +1754,10 @@ fn restore(store: &Store, journal: &Journal, cf: Option<&Cloudflare>) -> Result<
             && journal.routes6 == host::default_routes(true)?,
         "Default routes differ; inspect routing before clearing recovery journal"
     );
+    if journal.schema_version == 3 {
+        save_phase(store, journal, "restored")?;
+        crate::web_services::finish_maintenance(store, &journal.backup)?;
+    }
     fs::remove_file(store.state_dir.join("deployment.json"))?;
     Ok(())
 }
@@ -1409,6 +1767,11 @@ pub fn recover(store: &Store, token_file: Option<&Path>) -> Result<()> {
     store::check_private(&path, false)?;
     let journal: Journal = serde_json::from_slice(&fs::read(path)?)
         .map_err(|_| anyhow::anyhow!("Invalid deployment recovery journal"))?;
+    if journal.schema_version == 3
+        && ["snapshot-pending", "restored", "committed"].contains(&journal.phase.as_str())
+    {
+        return restore(store, &journal, None);
+    }
     let cf = if journal.pending_dns.is_some() || !journal.dns.is_empty() {
         Some(Cloudflare::new(
             journal.dns_zone.as_deref().context("Recovery DNS zone")?,
@@ -1437,7 +1800,7 @@ pub fn rollback(store: &Store, token_file: Option<&Path>) -> Result<bool> {
     let journal: Journal = serde_json::from_slice(&fs::read(&path)?)
         .map_err(|_| anyhow::anyhow!("Invalid completed deployment record"))?;
     ensure!(
-        journal.schema_version == 2
+        [2, 3].contains(&journal.schema_version)
             && journal.completed_release.as_deref() == Some(current.as_str()),
         "Completed deployment record belongs to another release"
     );
@@ -1650,12 +2013,25 @@ mod tests {
         store::private_dir(&store.state_dir).unwrap();
         store::atomic_write(&store.state_dir.join("deployment.json"), b"{}").unwrap();
         assert!(store.lock().is_err());
-        assert!(store.recovery_lock().is_ok());
+        // Another parallel test may fork while the failed ordinary lock still
+        // exists; CLOEXEC closes the inherited fd when that child execs.
+        let started = std::time::Instant::now();
+        loop {
+            if store.recovery_lock().is_ok() {
+                break;
+            }
+            assert!(started.elapsed() < std::time::Duration::from_secs(2));
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
     #[test]
     fn legacy_provisioning_journal_keeps_its_original_backup_scope() {
         let (_tmp, store) = existing();
-        let (c, _) = store.inputs().unwrap();
+        let (mut c, _) = store.inputs().unwrap();
+        c.vless = None;
+        c.distribution = None;
+        c.cn_warp = None;
+        c.web_services = None;
         let mut journal: Journal = serde_json::from_value(json!({
             "schema_version":1,"backup":"/var/lib/dmit-node/deployment-backups/fixture",
             "config":c,"previous":null,"reference":{"binary":"/usr/local/bin/xray","sha256":"fixture","version":"26.10.10","probe_url":"https://example.com/"},
