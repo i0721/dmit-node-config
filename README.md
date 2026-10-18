@@ -2,7 +2,7 @@
 
 一条命令，在 Debian / Ubuntu 上交互部署 Nginx、Xray Core 和可选 WARP。已有部署也使用同一入口更新，优先保留配置和密钥。服务原生运行，由 systemd 管理。
 
-当前版本：[v0.5.0](https://github.com/i0721/dmit-node-config/releases/tag/v0.5.0)。
+当前版本：[v0.5.1](https://github.com/i0721/dmit-node-config/releases/tag/v0.5.1)。
 
 ## Linux 一键安装与部署
 
