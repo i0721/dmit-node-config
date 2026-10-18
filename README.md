@@ -2,7 +2,7 @@
 
 一条命令，在 Debian / Ubuntu 上交互部署 Nginx、Xray Core 和可选 WARP。已有部署也使用同一入口更新，优先保留配置和密钥。服务原生运行，由 systemd 管理。
 
-当前版本：[v0.4.0](https://github.com/i0721/dmit-node-config/releases/tag/v0.4.0)。
+当前版本：[v0.5.0](https://github.com/i0721/dmit-node-config/releases/tag/v0.5.0)。
 
 ## Linux 一键安装与部署
 
@@ -28,13 +28,15 @@ bash dmitserverconfig-setup.sh
 
 默认主名称为 `speedtest`、REALITY 名称为 `files`，允许修改前缀、域名、端口、双栈及 WARP。新配置启用独立 VLESS Encryption/Vision 参数，提供 Xray 与 Mihomo 节点；已有有效身份、密钥、路径、证书和权重优先保留。公开首页使用中性 Welcome 内容，自定义网站不自动覆盖。
 
+0.5 的向导可另外启用独立 CN WARP，以及 Landing Page、官方 LibreSpeed 测速和 OpenList 文件站。CN 出口使用额外实例，其余流量保持原生直连；网站服务原生运行，后端仅监听 loopback。旧配置缺省不启用这两项功能，已有配置和文件优先保留。[使用与恢复说明 →](docs/cn-warp-web-services.md)
+
 更新时重新执行同一命令。向导显示本次变更，只有确认后才操作 DNS、证书和服务；必要的新 CA/WARP 条款需要明确同意。取消或失败会按保存的事实恢复；系统包和已签发 CA 资源有明确恢复边界。保留手动 DNS、证书与高级运维路径。
 
 ## 系统与验收
 
 发行资产为 Linux amd64、arm64，使用 Debian 12 glibc 基线原生构建。手动系统矩阵包含 amd64 Debian 12/13、Ubuntu 24.04/26.04，以及 arm64 Debian 12；本次实际执行、取消及未覆盖的范围见 [交付验收](docs/defect/08-one-command-delivery.md)。
 
-版本锁定、TLS/H2/H3、双域名与 IP 证书、独立 WARP 路由和原事务校验继续保留。WARP 不接管默认出口，用户客户端无需安装 WARP。修改客户端兼容字段时必须更新客户端。
+版本锁定、TLS/H2/H3、双域名与 IP 证书、独立 WARP 路由和原事务校验继续保留。WARP 不接管默认出口，用户客户端无需安装 WARP。修改客户端兼容字段时必须更新客户端。0.5 的本地真实双 WARP、网站与协议回归及未覆盖范围见 [本次验收记录](docs/defect/12-cn-warp-web-services-acceptance.md)；发行不表示生产 VPS 已升级。
 
 ## 文档
 

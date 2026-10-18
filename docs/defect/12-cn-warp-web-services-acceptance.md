@@ -1,6 +1,6 @@
 # CN WARP 与网站服务阶段验收记录
 
-日期：2026-10-18。状态：**开发中，未发布、未修改生产 VPS，不是最终验收通过报告。**
+日期：2026-10-18。状态：**本地实施及下述隔离验收通过，v0.5.0 已正式发行；未修改生产 VPS，不是生产验收通过报告。**
 
 ## 已取得的证据
 
@@ -22,6 +22,7 @@
 | 完成后漂移拒绝 | 实际数据库新增只读用户后，历史回滚拒绝覆盖，当前指针、服务、上传文件不变，无遗留恢复日志或维护标记 | 本地隔离环境 `nodectl-test/rollback-drift.log`，终端标记 `COMPLETED_ROLLBACK_DATABASE_DRIFT_REFUSED_WITHOUT_MUTATION_PASS` |
 | 两内核三传输 | 固定 Xray 26.10.10、Mihomo 1.19.32；六组合 TCP HTTPS、UDP DNS、多包 UDP、强制 HTTP/3 QUIC、无直连泄漏及 24 个错误密钥/flow/缺失 Encryption/旧客户端负例通过 | `dist/cnweb-protocol-regression.log` |
 | 上游配置校验 | 显式运行默认忽略的两个上游内核配置用例，固定 Xray/Mihomo 实际校验服务端与客户端配置通过 | `dist/cnweb-upstream-config-check.log`，2 个用例 |
+| 正式发行与公开安装 | 两架构原生构建和发布成功；公开 raw 脚本与仓库逐字节一致，实际工具安装及最新版本解析为 0.5.0；清单 OIDC 身份验签、全部摘要、两个 ELF 架构、安装程序与归档一致，以及两架构标签来源证明均验证通过 | [v0.5.0 Release](https://github.com/i0721/dmit-node-config/releases/tag/v0.5.0)、[发行工作流](https://github.com/i0721/dmit-node-config/actions/runs/39141965544)；本地 `dist/release-v0.5.0/`、`dist/release-050-*-attestation.json`，不表示已在 ARM64 主机完成部署 |
 | 真实双 WARP | 经单独授权，仅注册两个独立测试设备并复用凭据；两实例均验证 WARP trace。生产同源 Xray 分流模型完成 CN 域名 HTTPS、IPv4/IPv6 UDP DNS、非 CN 原生出口；停 CN 实例和删除接口后 CN 封闭，原实例及原生出口继续正常，原生口禁止目标计数为零、main 路由不变 | `dist/cnweb-real-warp.log`；`tests/integration/warp-real.sh`，仅本地一次性网络，不是生产验收 |
 | 真实 CN systemd 生命周期 | 原生 Debian 12 优化构建，经完整 nodectl 事务管理两个已注册实例与网站：CN 启动后故障注入恢复、成功部署、双栈 UDP DNS 各四轮、CN HTTPS、非 CN 原生；停止 CN 后原 WARP 和原生出口可用，强杀自动重启并通过 doctor，卸载恢复原服务且保留数据库；默认路由与其他主表路由保持 | `dist/cnweb-real-cn-systemd.log`，`REAL_CN_SYSTEMD_LOCAL_FIXTURE_COMPLETED`；不把内核为新 TUN 地址自动生成的主机/链路路由误记为默认路由变更 |
 | 公开 geodata 与私密材料隔离 | 实际部署中只读数据缓存仅两份文件、root 0644、单硬链接；两个 WARP 凭据仍为 0600，快照目录仍为 0700 | `dist/cnweb-cn-public-data-permissions.log` |
@@ -46,7 +47,7 @@
 
 1. 真实隧道已经通过上述有限流量检查；本次没有做 WARP 大流量测速，没有验证生产网络中的 Cloudflare 可达性，也没有验证新增 CN systemd 单元的完整生产部署。外层 MASQUE 使用 IPv4，隧道内 IPv4/IPv6 UDP 已实测，不将其表述为外层 IPv6 验收。
 2. 生产续期仍待验证；新增 CN 单元的本地真实 systemd 全生命周期、历史版本接管、手动/向导及材料恢复已有上表证据。尚未重跑四个 amd64 系统与 ARM64 系统，不以下载了 arm64 文件冒充运行验收。此前追加的本地 CN 启动命令被自动审批拒绝；用户另行授权全新隔离 systemd 计划后才执行。前两轮启动失败与第三轮过严的主表比较记录均保留，最终优化构建完整流程通过，不以失败轮次冒充通过。
-3. 对外发行文档、正式发布和生产切换预览仍待完成。公开材料已检查实际地址、域名及私钥标记，私密原始材料由忽略规则排除。本轮只读复核：生产运行 0.4.0，Debian 13，原四项服务活跃，新增 CN/网站后端未安装；原始记录私密保存。没有执行生产变更。
+3. 生产切换预览、执行授权与上线验收仍待完成。公开材料已检查实际地址、域名及私钥标记，私密原始材料由忽略规则排除。本轮只读复核：生产运行 0.4.0，Debian 13，原四项服务活跃，新增 CN/网站后端未安装；原始记录私密保存。没有执行生产变更。
 
 原始日志、凭据与隔离环境保留在受保护的本地目录；公开材料不包含实际 VPS 地址、域名、Token、私钥或客户端身份。外部设备注册、生产服务及资源变更均另行按具体预览授权。
 
