@@ -1962,6 +1962,7 @@ pub fn renew(store: &Store) -> Result<()> {
         }
         store::atomic_write(&p, &serde_json::to_vec_pretty(&r)?)?;
     }
+    crate::admin_install::renew_if_installed(&c)?;
     Ok(())
 }
 

@@ -1,0 +1,58 @@
+export const shellResources = {
+  'zh-CN': {
+    translation: {
+      nodeShell: {
+        subtitle: '单机节点管理',
+        safe: 'DMIT 默认保护',
+        protection: '环境资产可编辑，平台配置由 Rust 强制保护。',
+        skip: '跳到主要内容',
+        context: 'DMIT VPS / 节点控制台',
+        dark: '深色模式',
+        light: '浅色模式',
+        logout: '退出登录',
+        navigation: '导航',
+        navigationDescription: '节点管理导航',
+        closeNavigation: '关闭导航',
+        loginTitle: '管理这台节点',
+        loginDescription:
+          '使用独立管理员 Token 登录。首次安装时生成，遗失后通过 SSH 运行 nodectl admin reset-token 重置。',
+        token: '管理员 Token',
+        show: '显示 Token',
+        hide: '隐藏 Token',
+        login: '登录管理后台',
+        loginFailed: '无法登录',
+        loginFooter: '仅单管理员 · 安全会话 · DMIT 配置默认保护',
+        restoring: '正在恢复会话',
+        restoreDescription: '验证会话后读取真实节点状态。',
+      },
+    },
+  },
+  en: {
+    translation: {
+      nodeShell: {
+        subtitle: 'Single node management',
+        safe: 'DMIT defaults protected',
+        protection: 'Environment assets are editable. Rust enforces platform protection.',
+        skip: 'Skip to main content',
+        context: 'DMIT VPS / Node console',
+        dark: 'Dark mode',
+        light: 'Light mode',
+        logout: 'Sign out',
+        navigation: 'Navigation',
+        navigationDescription: 'Node management navigation',
+        closeNavigation: 'Close navigation',
+        loginTitle: 'Manage this node',
+        loginDescription:
+          'Sign in with the independent administrator token. Reset it over SSH with nodectl admin reset-token.',
+        token: 'Administrator token',
+        show: 'Show token',
+        hide: 'Hide token',
+        login: 'Sign in',
+        loginFailed: 'Sign-in failed',
+        loginFooter: 'One administrator · Secure session · DMIT defaults protected',
+        restoring: 'Restoring session',
+        restoreDescription: 'Node data loads after the session is verified.',
+      },
+    },
+  },
+} as const;

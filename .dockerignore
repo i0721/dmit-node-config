@@ -9,3 +9,5 @@ secrets.json
 generated
 exports
 **/__pycache__
+tmp
+webui

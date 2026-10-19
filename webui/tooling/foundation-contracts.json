@@ -1,0 +1,266 @@
+{
+  "contracts": {
+    "@community-go/core": {
+      "layer": "universal",
+      "owner": "pure frontend semantics",
+      "maturity": "stable",
+      "exports": ["."],
+      "authorityRoutes": ["/dmit"],
+      "evidence": ["packages/core/src/navigation.test.ts"],
+      "upstreamAuthorityRoutes": ["/foundations"]
+    },
+    "@community-go/design-system": {
+      "layer": "universal",
+      "owner": "semantic token and motion primitives",
+      "maturity": "stable",
+      "exports": ["./tokens.css", "./motion.css"],
+      "authorityRoutes": ["/dmit"],
+      "evidence": [
+        "packages/design-system/src/tokens.css",
+        "packages/design-system/src/motion.css",
+        "docs/upstream-evidence/apps/web/e2e/ui-ux-109.spec.ts.txt",
+        "docs/changes/109-ui-ux-optimization/README.md"
+      ],
+      "upstreamAuthorityRoutes": ["/motion", "/ui-elements"]
+    },
+    "@community-go/form-foundation": {
+      "layer": "universal",
+      "owner": "form lifecycle and field bridge",
+      "maturity": "stable",
+      "exports": ["."],
+      "authorityRoutes": ["/dmit"],
+      "evidence": [
+        "packages/form-foundation/src/index.test.tsx",
+        "docs/upstream-evidence/apps/web/e2e/ui-ux-109.spec.ts.txt",
+        "docs/changes/109-ui-ux-optimization/tasks.md"
+      ],
+      "upstreamAuthorityRoutes": ["/ui-elements/forms"]
+    },
+    "@community-go/i18n": {
+      "layer": "universal",
+      "owner": "locale runtime and formatting",
+      "maturity": "stable",
+      "exports": ["."],
+      "authorityRoutes": ["/dmit"],
+      "evidence": [
+        "packages/i18n/src/index.test.tsx",
+        "docs/upstream-evidence/apps/web/e2e/authentication.spec.ts.txt",
+        "apps/web/e2e/dmit.spec.ts"
+      ],
+      "upstreamAuthorityRoutes": ["/foundations"]
+    },
+    "@community-go/schemas": {
+      "layer": "universal",
+      "owner": "schema contract and authority runtime primitives",
+      "maturity": "stable",
+      "exports": [".", "./runtime"],
+      "authorityRoutes": ["/dmit"],
+      "evidence": [
+        "packages/schemas/src/index.test.ts",
+        "packages/schemas/src/runtime/patch.test.ts",
+        "packages/schemas/src/runtime/protocol-validate.test.ts",
+        "packages/schemas/src/runtime/generator-token-regions.test.ts",
+        "packages/schemas/src/runtime/generator-motion-language.test.ts",
+        "packages/schemas/src/runtime/runtime-integration.test.ts"
+      ],
+      "upstreamAuthorityRoutes": ["/foundations"]
+    },
+    "@community-go/types": {
+      "layer": "universal",
+      "owner": "stable cross-workspace types",
+      "maturity": "stable",
+      "exports": ["."],
+      "authorityRoutes": ["/dmit"],
+      "evidence": ["packages/types/src/index.ts"],
+      "upstreamAuthorityRoutes": ["/foundations"]
+    },
+    "@community-go/ui-adapter": {
+      "layer": "universal",
+      "owner": "product-neutral UI contracts",
+      "maturity": "stable",
+      "exports": [
+        "./styles.css",
+        "./action",
+        "./accessibility",
+        "./async-region",
+        "./busy-indicator",
+        "./card",
+        "./command-menu",
+        "./content-swap-transition",
+        "./data-display",
+        "./date-picker-field",
+        "./description-list",
+        "./disclosure",
+        "./feedback",
+        "./feedback-context",
+        "./feedback-provider",
+        "./feedback-presence",
+        "./form-field",
+        "./form-error-summary",
+        "./icon-action",
+        "./identity",
+        "./menu-button",
+        "./navigation",
+        "./navigation-flyout",
+        "./overlays",
+        "./overlay-trigger",
+        "./panel",
+        "./progress-meter",
+        "./ready-image",
+        "./search-box",
+        "./skeleton",
+        "./state-surface",
+        "./status-pill",
+        "./step-navigation",
+        "./tree",
+        "./toggle-group"
+      ],
+      "authorityRoutes": ["/dmit"],
+      "evidence": [
+        "apps/web/src/test/ui-element-foundations.test.tsx",
+        "apps/web/src/test/ui-element-actions.test.tsx",
+        "apps/web/src/test/password-field.test.tsx",
+        "docs/upstream-evidence/apps/web/e2e/authentication.spec.ts.txt",
+        "docs/upstream-evidence/apps/web/e2e/surface-foundation.spec.ts.txt",
+        "docs/upstream-evidence/apps/web/e2e/overlays.spec.ts.txt",
+        "docs/upstream-evidence/apps/web/e2e/account-menu.spec.ts.txt",
+        "docs/upstream-evidence/apps/web/e2e/sidebar-design.spec.ts.txt",
+        "docs/upstream-evidence/apps/web/e2e/settings-ux-review.spec.ts.txt",
+        "docs/upstream-evidence/apps/web/e2e/settings-product-review.spec.ts.txt",
+        "docs/upstream-evidence/apps/web/e2e/data-display.spec.ts.txt",
+        "docs/upstream-evidence/apps/web/e2e/ui-ux-109.spec.ts.txt",
+        "docs/changes/109-ui-ux-optimization/README.md",
+        "docs/upstream-evidence/apps/web/e2e/management-completion.spec.ts.txt",
+        "apps/web/src/test/date-picker-contract.test.tsx",
+        "apps/web/e2e/dmit.spec.ts"
+      ],
+      "upstreamAuthorityRoutes": ["/ui-elements", "/motion"]
+    },
+    "@community-go/state-foundation": {
+      "layer": "universal",
+      "owner": "product state mechanics (store creation, persistence, storage, hydration)",
+      "maturity": "experimental",
+      "exports": [".", "./react", "./testing"],
+      "authorityRoutes": ["/dmit"],
+      "evidence": [
+        "packages/state-foundation/src/framework.test.ts",
+        "packages/state-foundation/src/hydration/lifecycle.test.ts",
+        "packages/state-foundation/src/storage/indexed-db.test.ts"
+      ],
+      "upstreamAuthorityRoutes": ["/settings", "/foundations"]
+    },
+    "@community-go/surface-foundation": {
+      "layer": "surface",
+      "owner": "product surface UX patterns and shell presentation",
+      "maturity": "stable",
+      "exports": [
+        "./styles.css",
+        "./layout",
+        "./shell-navigation",
+        "./collection",
+        "./detail-settings",
+        "./form-actions",
+        "./states-operations",
+        "./motion-policy-context",
+        "./viewport-reveal",
+        "./periodic-refresh",
+        "./use-periodic-refresh"
+      ],
+      "authorityRoutes": ["/dmit"],
+      "evidence": [
+        "packages/surface-foundation/src/contracts.test.tsx",
+        "docs/upstream-evidence/apps/web/e2e/settings-ux-review.spec.ts.txt",
+        "docs/upstream-evidence/apps/web/e2e/settings-product-review.spec.ts.txt",
+        "docs/upstream-evidence/apps/web/e2e/design-contract.spec.ts.txt",
+        "docs/upstream-evidence/apps/web/e2e/ui-ux-109.spec.ts.txt",
+        "docs/changes/109-ui-ux-optimization/README.md",
+        "docs/upstream-evidence/apps/web/src/test/motion-reveal.test.tsx.txt",
+        "docs/upstream-evidence/apps/web/e2e/motion-progressive.spec.ts.txt",
+        "docs/upstream-evidence/apps/web/e2e/scroll-reveal-items.spec.ts.txt",
+        "docs/upstream-evidence/apps/web/e2e/sidebar-design.spec.ts.txt",
+        "docs/upstream-evidence/apps/web/e2e/sidebar-browser-zoom.spec.ts.txt",
+        "apps/web/e2e/dmit.spec.ts"
+      ],
+      "upstreamAuthorityRoutes": ["/page-patterns", "/page-archetypes", "/motion"]
+    },
+    "@community-go/plugin-framework": {
+      "layer": "surface",
+      "kind": "framework",
+      "owner": "plugin contract, registry, route target and host capability",
+      "maturity": "experimental",
+      "exports": [
+        ".",
+        "./navigation",
+        "./plugin",
+        "./preferences",
+        "./workspace",
+        "./workbench",
+        "./notifications",
+        "./commands",
+        "./leave-confirm",
+        "./schemas",
+        "./schemas/runtime",
+        "./target"
+      ],
+      "authorityRoutes": ["/dmit"],
+      "evidence": [
+        "packages/plugin-framework/src/framework.test.ts",
+        "packages/plugin-framework/src/plugin.test.tsx",
+        "packages/plugin-framework/src/schemas.test.ts",
+        "packages/plugin-framework/src/schemas-runtime.test.ts",
+        "docs/upstream-evidence/apps/web/e2e/ui-ux-109.spec.ts.txt",
+        "docs/changes/109-ui-ux-optimization/README.md"
+      ],
+      "upstreamAuthorityRoutes": ["/reference-resources"]
+    },
+    "@community-go/surface": {
+      "layer": "surface",
+      "kind": "surface",
+      "owner": "surface shell, composition and private plugin workspace",
+      "maturity": "experimental",
+      "exports": [
+        "./shell",
+        "./preferences-model",
+        "./identity",
+        "./icon-presentation",
+        "./icon-components",
+        "./generated/catalog",
+        "./generated/composition",
+        "./plugin-routes/*",
+        "./identity/runtime",
+        "./node-management"
+      ],
+      "authorityRoutes": [
+        "/dmit",
+        "/dmit/nodes",
+        "/dmit/config",
+        "/dmit/network",
+        "/dmit/dns",
+        "/dmit/services",
+        "/dmit/operations"
+      ],
+      "evidence": [
+        "surfaces/src/shell.test.ts",
+        "surfaces/src/preferences-model.test.ts",
+        "surfaces/src/identity/model.test.ts",
+        "docs/upstream-evidence/apps/web/src/test/identity-contract.test.ts.txt",
+        "docs/changes/108-ui-ux-audit/product-implementation.md",
+        "docs/upstream-evidence/apps/web/src/test/account-security.test.ts.txt",
+        "docs/upstream-evidence/apps/web/e2e/management-completion.spec.ts.txt",
+        "docs/upstream-evidence/apps/web/e2e/management-completion-backend.spec.ts.txt",
+        "docs/changes/110-management-completion/README.md",
+        "apps/web/e2e/dmit.spec.ts",
+        "apps/web/src/host/api.test.ts"
+      ],
+      "upstreamAuthorityRoutes": [
+        "/reference-resources",
+        "/users",
+        "/account",
+        "/roles",
+        "/roles/permissions",
+        "/notifications",
+        "/audit-logs"
+      ]
+    }
+  }
+}

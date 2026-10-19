@@ -19,12 +19,15 @@ trap 'rm -rf "$work"' EXIT
 install -m 0755 "$binary" "$work/nodectl"
 cp LICENSE THIRD_PARTY.md "$work/"
 cp nodectl.cdx.json "$work/sbom.cdx.json"
+test -s /opt/admin-static/webui-manifest.json
+cp -R /opt/admin-static/webui "$work/webui"
+cp /opt/admin-static/webui-manifest.json "$work/"
 cargo metadata --locked --format-version 1 --filter-platform "$target" > "$work/cargo-metadata.json"
 cargo run --quiet --locked --bin repo-tools -- release-licenses "$work"
 printf 'version=%s\ntarget=%s\ncommit=%s\nrust=%s\nsource_date_epoch=%s\n' "$version" "$target" "$commit" "$(rustc --version)" "$SOURCE_DATE_EPOCH" > "$work/BUILD-INFO"
 printf 'libc=%s\ncyclonedx=%s\n' "$(getconf GNU_LIBC_VERSION)" "$(cargo cyclonedx --version)" >> "$work/BUILD-INFO"
 mkdir -p dist
-tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner -C "$work" -czf "$out" nodectl LICENSE THIRD_PARTY.md sbom.cdx.json BUILD-INFO licenses
+tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner -C "$work" -czf "$out" nodectl LICENSE THIRD_PARTY.md sbom.cdx.json BUILD-INFO licenses webui webui-manifest.json
 # Verify the exact archived executable, not just target/release.
 tar -xOzf "$out" nodectl > "$work/verify-nodectl"
 chmod 0700 "$work/verify-nodectl"

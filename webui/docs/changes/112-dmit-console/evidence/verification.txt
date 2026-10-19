@@ -1,0 +1,67 @@
+DMIT Console local acceptance — 2026-10-19
+Workspace version: nodectl 0.6.0 (not published)
+Frontend upstream: rin721/console-web, 60189fd7ccbc1c034034ed0ca5ae30d61a448026
+Environment: disposable Debian 12 / systemd / Linux amd64 containers; Chromium 151.0.7922.34.
+No production VPS, production credentials or public DNS records were changed.
+
+PASS scripts/check-all.sh
+  Main Rust tests: 69 passed, 7 require dedicated isolated drivers.
+  repo-tools: 3 passed. Real HTTP process test: 1 passed. Original CLI tests: 5 passed.
+  fmt, clippy all-targets/all-features -D warnings, Schema, Markdown,
+  pinned workflow actions and native lifecycle checks passed.
+
+PASS frontend gates
+  Foundation fixtures 14, Tailwind fixtures 8, 12 workspaces / 11 contract owners.
+  Architecture fixtures 18; 248 source files checked.
+  Dependency policy, plugin and design codegen freshness, lint and types passed.
+  Vitest: 251 passed.
+  Static build and subsequent typegen both passed; static directory contains no types/.
+  Gzip bytes: initial 389044, max route 436176, CSS 47452, largest chunk 91759.
+  Original performance budgets unchanged. Format and documentation checks passed.
+
+PASS real HTTPS Playwright suite: 5 / 5, 5.7 minutes
+  Seven business pages; mobile navigation; dark mode; no persistence of credentials.
+  Current successful release exported to an actual downloaded client file.
+  Rust protection, advanced approval, full deploy preview, real check/apply,
+  protected snapshots, identity restoration and two real rollbacks.
+  Actual UI editing, diff review, checks, two confirmations and snapshot restoration.
+  Atomic CLI replacement preserves trusted child execution; two actual API restarts
+  invalidate sessions and preserve node files, credentials and original service PIDs.
+PASS additional login/overview/seven-page/dark/mobile WCAG AA audit: 1 / 1.
+PASS actual CLI uninstall interruption -> Web recovery: 1 / 1; original node and administrator credential digests retained.
+Desktop, mobile, dark, login and advanced review screenshots inspected.
+
+PASS actual static archive installation and occupied-port failed reinstall recovery
+  ADMIN_STATIC_ARCHIVE_INSTALL_AND_FAILED_REINSTALL_RESTORE_PASS
+PASS fresh independent fixture and configured HTTPS port 11443
+  ADMIN_HTTPS_AND_ORIGINAL_NODE_BYTES_AND_PIDS_PRESERVED_PASS
+  ADMIN_FRESH_RUNTIME_AND_CONFIGURABLE_PORT_PASS
+
+PASS updated original CLI full Linux lifecycle: INTEGRATION_PASS
+  Real Xray/Mihomo, three transports, UDP/DNS/QUIC, encrypted negative cases,
+  sharing authentication/rotation/revocation, all injected recovery stages,
+  configuration upgrade/rollback, uninstall restoration, DNS/certificate/material
+  recovery, terminal wizard and isolated ACME key reuse/deferred reload.
+PASS dedicated official Xray/Mihomo server/client configuration tests: 2.
+PASS fresh namespace CN policy/guard and restore tests.
+PASS simulated TUN with real kernel/Xray/geosite/geoip forwarding
+  IPv4/IPv6 TCP/UDP, DNS failure blocking, interface deletion and no native leak.
+PASS native LibreSpeed/OpenList lifecycle
+  Maintenance routing, interrupted material/service recovery, apply failure
+  recovery and durable committed-data retention.
+PASS official native and managed HTTPS OpenList tests
+  64 MiB upload/download, Range, anonymous/readonly restrictions, sandbox headers.
+
+Preservation evidence:
+  git diff --exit-code -- config templates schemas src/render.rs src/config.rs = 0.
+  Actual admin install/reinstall preserves node configuration/key/config digests and
+  original Nginx/Xray PIDs. Advanced apply/restore/rollback returns original digests.
+  webui has no .git; the temporary upstream audit copy is no longer an active Git repo.
+
+Limits:
+  Live Cloudflare account writes and WARP registration were not performed.
+  Other OS/arm64 CI matrix and new remote CI jobs were not triggered locally.
+  A local fixture archive is not an OIDC-signed v0.6.0 release; publication remains separate.
+  Native service fixture downloads initially failed from its container network;
+  the same official archives were fetched on the host and checked against both
+  archive and executable hashes in versions.lock.toml before the successful rerun.

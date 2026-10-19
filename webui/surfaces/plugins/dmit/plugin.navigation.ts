@@ -1,0 +1,61 @@
+import type { NavigationContribution } from '@community-go/plugin-framework/navigation';
+export const navigationContribution = {
+  parents: [
+    {
+      navigationId: 'dmit.overview',
+      routeId: 'dmit',
+      groupId: 'administration',
+      labelKey: 'dmit.nav.overview',
+      iconId: 'dashboard',
+      order: 0,
+    },
+    {
+      navigationId: 'dmit.nodes',
+      routeId: 'dmit.nodes',
+      groupId: 'administration',
+      labelKey: 'dmit.nav.nodes',
+      iconId: 'resource',
+      order: 1,
+    },
+    {
+      navigationId: 'dmit.config',
+      routeId: 'dmit.config',
+      groupId: 'administration',
+      labelKey: 'dmit.nav.config',
+      iconId: 'settings',
+      order: 2,
+    },
+    {
+      navigationId: 'dmit.network',
+      routeId: 'dmit.network',
+      groupId: 'administration',
+      labelKey: 'dmit.nav.network',
+      iconId: 'resource',
+      order: 3,
+    },
+    {
+      navigationId: 'dmit.dns',
+      routeId: 'dmit.dns',
+      groupId: 'administration',
+      labelKey: 'dmit.nav.dns',
+      iconId: 'identity',
+      order: 4,
+    },
+    {
+      navigationId: 'dmit.services',
+      routeId: 'dmit.services',
+      groupId: 'administration',
+      labelKey: 'dmit.nav.services',
+      iconId: 'action',
+      order: 5,
+    },
+    {
+      navigationId: 'dmit.operations',
+      routeId: 'dmit.operations',
+      groupId: 'administration',
+      labelKey: 'dmit.nav.operations',
+      iconId: 'data',
+      order: 6,
+    },
+  ],
+} as const satisfies NavigationContribution;

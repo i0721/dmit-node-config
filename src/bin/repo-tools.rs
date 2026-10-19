@@ -96,6 +96,10 @@ fn anchors(path: &Path) -> Result<BTreeSet<String>> {
 }
 fn docs() -> Result<()> {
     let root = fs::canonicalize(".")?;
+    // Imported frozen history belongs to the upstream commit, whose removed demo
+    // routes and operator paths are not current DMIT documentation. Verify every
+    // byte before deferring its historical links; current/new docs are all audited.
+    let frozen = upstream_evidence(&root)?;
     let files = command(
         "git",
         &[
@@ -115,6 +119,9 @@ fn docs() -> Result<()> {
     let mut errors = vec![];
     for name in files.split(|b| *b == 0).filter(|s| !s.is_empty()) {
         let name = std::str::from_utf8(name)?;
+        if frozen.contains(name) {
+            continue;
+        }
         let path = root.join(name);
         if path.extension().is_none_or(|e| e != "md") || !path.is_file() {
             continue;
@@ -160,6 +167,43 @@ fn docs() -> Result<()> {
     ensure!(errors.is_empty(), "Markdown: {} errors", errors.len());
     println!("Markdown targets, anchors and identifiers passed");
     Ok(())
+}
+fn upstream_evidence(root: &Path) -> Result<BTreeSet<String>> {
+    use sha2::{Digest, Sha256};
+    let path = root.join("webui/tooling/upstream-evidence.json");
+    if !path.exists() {
+        return Ok(BTreeSet::new());
+    }
+    let manifest: Value = serde_json::from_slice(&fs::read(path)?)?;
+    ensure!(
+        manifest["commit"] == "60189fd7ccbc1c034034ed0ca5ae30d61a448026"
+            && manifest["repository"] == "https://github.com/rin721/console-web",
+        "Unrecognized upstream evidence"
+    );
+    let allowed = Regex::new(
+        r"^webui/docs/(?:changes/(?:0[0-9]{2}|10[0-9]|11[01])-[a-z0-9-]+/.+\.md|upstream-evidence/[a-zA-Z0-9_./-]+\.txt)$",
+    )?;
+    let mut frozen = BTreeSet::new();
+    for (name, hash) in manifest["records"]
+        .as_object()
+        .context("Frozen evidence records")?
+    {
+        ensure!(
+            allowed.is_match(name) && !name.split('/').any(|p| p == ".."),
+            "Invalid frozen evidence path"
+        );
+        let file = root.join(name);
+        ensure!(
+            !fs::symlink_metadata(&file)?.file_type().is_symlink(),
+            "Frozen evidence symlink"
+        );
+        ensure!(
+            hash.as_str() == Some(hex::encode(Sha256::digest(fs::read(file)?)).as_str()),
+            "Upstream frozen evidence changed: {name}"
+        );
+        frozen.insert(name.clone());
+    }
+    Ok(frozen)
 }
 fn workflows() -> Result<()> {
     let uses = Regex::new(r"uses:\s*([^\s#]+)")?;
@@ -458,6 +502,28 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn frozen_upstream_is_integrity_checked_and_cannot_hide_current_docs() {
+        use sha2::{Digest, Sha256};
+        let t = tempfile::tempdir().unwrap();
+        fs::create_dir_all(t.path().join("webui/tooling")).unwrap();
+        let name = "webui/docs/changes/111-example/README.md";
+        let file = t.path().join(name);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, "frozen").unwrap();
+        let manifest = t.path().join("webui/tooling/upstream-evidence.json");
+        let make = |name: &str| json!({"repository":"https://github.com/rin721/console-web","commit":"60189fd7ccbc1c034034ed0ca5ae30d61a448026","records":{name:hex::encode(Sha256::digest(b"frozen"))}});
+        fs::write(&manifest, serde_json::to_vec(&make(name)).unwrap()).unwrap();
+        assert!(upstream_evidence(t.path()).unwrap().contains(name));
+        fs::write(&file, "changed").unwrap();
+        assert!(upstream_evidence(t.path()).is_err());
+        fs::write(
+            manifest,
+            serde_json::to_vec(&make("webui/docs/changes/112-dmit-console/README.md")).unwrap(),
+        )
+        .unwrap();
+        assert!(upstream_evidence(t.path()).is_err());
+    }
     #[test]
     fn unicode_heading_slug() {
         assert_eq!(slug("3. Cloudflare API Token"), "3-cloudflare-api-token");

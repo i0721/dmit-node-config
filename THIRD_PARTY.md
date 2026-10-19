@@ -5,6 +5,8 @@
 | Library | Version | SPDX license | GitHub |
 | --- | --- | --- | --- |
 | anyhow | 1.0.104 | MIT OR Apache-2.0 | [source](https://github.com/dtolnay/anyhow) |
+| axum | 0.8 (Cargo.lock) | MIT | [source](https://github.com/tokio-rs/axum) |
+| tokio | 1 (Cargo.lock) | MIT | [source](https://github.com/tokio-rs/tokio) |
 | base64 | 0.22.1 | MIT OR Apache-2.0 | [source](https://github.com/marshallpierce/rust-base64) |
 | clap | 4.6.7 | MIT OR Apache-2.0 | [source](https://github.com/clap-rs/clap) |
 | fs2 | 0.4.3 | MIT/Apache-2.0 | [source](https://github.com/danburkert/fs2-rs) |
@@ -29,6 +31,8 @@
 | x25519-dalek | 2.0.1 | BSD-3-Clause | [source](https://github.com/dalek-cryptography/curve25519-dalek/tree/main/x25519-dalek) |
 
 传递依赖由 Cargo.lock 固定，CI 的 cargo-deny 检查许可证和安全公告。当前解析出的许可证均为开源许可；不从私有 registry 或未声明的 Git 来源加载依赖。
+
+管理前端基于 [rin721/console-web](https://github.com/rin721/console-web) 提交 `60189fd7ccbc1c034034ed0ca5ae30d61a448026`。保留来源与历史证据；原仓库未提供单独 LICENSE 文件，不把本项目 Rust 的 MIT 声明擅自归属于上游代码。前端运行依赖由 `webui/pnpm-lock.yaml` 固定；打包时读取实际安装包的许可/NOTICE 原文和元数据，随静态资源分发为 `THIRD_PARTY.txt`，不携带本机构建路径。生产仅分发静态产物，不包含 Node.js 服务。
 
 外部运行组件： [Xray Core](https://github.com/XTLS/Xray-core)（MPL-2.0）、[Nginx](https://github.com/nginx/nginx)（BSD-2-Clause）、[usque](https://github.com/Diniboy1123/usque)（MIT）、[acme.sh](https://github.com/acmesh-official/acme.sh)（GPL-3.0）。这些组件作为独立进程运行，并未重写或链接进 Rust 程序。
 

@@ -18,11 +18,24 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with: {fetch-depth: 0}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: {node-version: '24.11.1'}
+      - name: Build static admin UI (no production Node service)
+        working-directory: webui
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.22.0 --activate
+          pnpm install --frozen-lockfile
+          pnpm build
+          pnpm performance:check
+          mkdir -p ../dist
+          pnpm licenses list --prod --json > ../dist/admin-frontend-licenses.json
+          node ../scripts/package-webui.mjs
       - name: Package natively against Debian 12 glibc baseline
         run: |
           docker build -f scripts/Dockerfile.release -t nodectl-release-build .
           mkdir -p dist
-          docker run --rm --entrypoint /bin/bash -e SOURCE_COMMIT="$(git rev-parse HEAD)" -e SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" -v "$PWD/dist:/work/dist" nodectl-release-build scripts/release-package.sh '${{ matrix.target }}'
+          docker run --rm --entrypoint /bin/bash -e SOURCE_COMMIT="$(git rev-parse HEAD)" -e SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" -v "$PWD/dist:/work/dist" -v "$PWD/dist/admin-static:/opt/admin-static:ro" nodectl-release-build scripts/release-package.sh '${{ matrix.target }}'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: release-${{ matrix.target }}

@@ -109,6 +109,10 @@ impl Store {
                 && !self.state_dir.join("deployment.json").exists(),
             "An interrupted deployment exists: run nodectl recover (see README recovery)"
         );
+        ensure!(
+            !self.state_dir.join("admin-input.json").exists(),
+            "Interrupted Web configuration commit exists: run nodectl recover"
+        );
         Ok(file)
     }
     pub fn recovery_lock(&self) -> Result<File> {
@@ -222,7 +226,8 @@ impl Store {
                     || v2
                     || v3
                     || (manifest.template_version == render::TEMPLATE_VERSION
-                        && ["0.5.0", "0.5.1"].contains(&manifest.generator_version.as_str()))),
+                        && ["0.5.0", "0.5.1", "0.6.0"]
+                            .contains(&manifest.generator_version.as_str()))),
             "Release requires its original nodectl/template version"
         );
         check_private(&path.join("source"), true)?;

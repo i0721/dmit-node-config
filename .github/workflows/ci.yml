@@ -35,6 +35,31 @@ jobs:
       - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  admin-console:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: {node-version: '24.11.1'}
+      - name: Prepare frontend test tools
+        working-directory: webui
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.22.0 --activate
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps chromium
+      - name: Static UI, real Rust API, HTTPS, policy and lifecycle acceptance
+        run: bash scripts/test-admin.sh
+      - name: Keep sanitized admin evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: admin-console-evidence
+          path: |
+            dist/admin-runtime.log
+            webui/docs/changes/112-dmit-console/evidence/*.png
+          if-no-files-found: error
   integration:
     if: ${{ !inputs.skip_integration }}
     strategy:

@@ -18,4 +18,10 @@
 **/usque-config.json
 # Operator-provided reference script; audited locally, never shipped/executed.
 /tmp/usque_v0.2.0.sh.txt
+/tmp/console-web/
+/tmp/console-web-*
+/webui/node_modules/
+/webui/out/
+/webui/.next/
+/webui/test-results/
 

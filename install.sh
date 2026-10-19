@@ -2,9 +2,9 @@
 # Default: verified nodectl installation followed by the Rust deployment wizard.
 set -eu
 umask 077
-VERSION= PREFIX=/usr/local EXECUTE=no MODE=wizard BUNDLE_DIR= CONFIG_DIR=/etc/dmit-node STATE_DIR=/var/lib/dmit-node TOKEN_FILE=
+VERSION= PREFIX=/usr/local EXECUTE=no MODE=wizard BUNDLE_DIR= CONFIG_DIR=/etc/dmit-node STATE_DIR=/var/lib/dmit-node TOKEN_FILE= WITH_ADMIN=no
 REPOSITORY=i0721/dmit-node-config
-usage() { printf '%s\n' 'Usage: bash install.sh [--version vX.Y.Z] [--install-only --execute | --dry-run] [--prefix /usr/local] [--bundle-dir PATH] [--config-dir PATH] [--state-dir PATH]' 'No action flag: install a verified stable release and run the complete interactive deployment wizard.' 'Legacy --execute/--dry-run explicitly select tool-only installation.'; }
+usage() { printf '%s\n' 'Usage: bash install.sh [--version vX.Y.Z] [--install-only --execute | --dry-run] [--with-admin] [--prefix /usr/local] [--bundle-dir PATH] [--config-dir PATH] [--state-dir PATH]' 'No action flag: install a verified stable release and run the complete interactive deployment wizard.' 'Legacy --execute/--dry-run explicitly select tool-only installation.' '--with-admin installs the signed static WebUI with separate HTTPS on 9443 after a valid node deployment (v0.6.0+).'; }
 die() { printf 'install: %s\n' "$*" >&2; exit 1; }
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -15,6 +15,7 @@ while [ "$#" -gt 0 ]; do
     --install-only) MODE=install; shift;;
     --execute) MODE=install; EXECUTE=yes; shift;;
     --dry-run) MODE=install; EXECUTE=no; shift;;
+    --with-admin) WITH_ADMIN=yes; shift;;
     --help|-h) usage; exit 0;;
     *) die "Unknown option: $1";;
   esac
@@ -24,7 +25,8 @@ if [ "$MODE" = wizard ]; then
   if [ "$(id -u)" != 0 ]; then
     command -v sudo >/dev/null 2>&1 || die 'Run this installer as root, or install sudo'
     [ -f "$0" ] && [ ! -L "$0" ] || die 'Download the installer to a regular file before elevation'
-    exec sudo --preserve-env=http_proxy,https_proxy,all_proxy,no_proxy,HTTP_PROXY,HTTPS_PROXY,ALL_PROXY,NO_PROXY,CURL_CA_BUNDLE,SSL_CERT_FILE /bin/sh "$0" --version "$VERSION" --prefix "$PREFIX" --config-dir "$CONFIG_DIR" --state-dir "$STATE_DIR" --bundle-dir "$BUNDLE_DIR" --token-file "$TOKEN_FILE"
+    if [ "$WITH_ADMIN" = yes ]; then set -- --with-admin; else set --; fi
+    exec sudo --preserve-env=http_proxy,https_proxy,all_proxy,no_proxy,HTTP_PROXY,HTTPS_PROXY,ALL_PROXY,NO_PROXY,CURL_CA_BUNDLE,SSL_CERT_FILE /bin/sh "$0" --version "$VERSION" --prefix "$PREFIX" --config-dir "$CONFIG_DIR" --state-dir "$STATE_DIR" --bundle-dir "$BUNDLE_DIR" --token-file "$TOKEN_FILE" "$@"
   fi
   case "$(cat /etc/os-release)" in *'ID=debian'*|*'ID=ubuntu'*|*'ID="debian"'*|*'ID="ubuntu"'*) :;; *) die 'Automatic deployment requires Debian or Ubuntu';; esac
   [ -d /run/systemd/system ] || die 'A running systemd system is required'
@@ -43,6 +45,9 @@ if [ -z "$VERSION" ]; then
   case "$effective" in "https://github.com/$REPOSITORY/releases/tag/"*) VERSION=${effective##*/};; *) die 'Unexpected latest-release redirect';; esac
 fi
 printf '%s\n' "$VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || die 'Specify an exact stable version: --version vX.Y.Z'
+if [ "$WITH_ADMIN" = yes ]; then
+  printf '%s\n' "$VERSION" | awk -F '[v.]' '{exit !(($2+0)>0 || ($3+0)>=6)}' || die 'Static admin requires v0.6.0 or newer'
+fi
 if [ "$MODE" = wizard ]; then
   printf '%s\n' "$VERSION" | awk -F '[v.]' '{exit !(($2+0)>0 || ($3+0)>3 || (($3+0)==3 && ($4+0)>=1))}' || die 'The complete wizard requires v0.3.1 or newer; no suitable stable release is available'
 fi
@@ -59,6 +64,7 @@ printf 'Version: %s\nArchitecture: %s\nAsset: %s\nInstall: %s/bin/nodectl\nTrust
 [ "$EXECUTE" = yes ] || { printf '%s\n' 'Preview only; rerun with --execute. No files or downloads changed.'; exit 0; }
 for tool in curl sha256sum tar mktemp install flock sync od tr; do command -v "$tool" >/dev/null 2>&1 || die "Missing $tool; see docs/installation.md"; done
 [ ! -e "$STATE_DIR/deployment.json" ] && [ ! -e "$STATE_DIR/transaction.json" ] && [ ! -e "$STATE_DIR/uninstall.json" ] || die 'Recover the interrupted lifecycle transaction before installing/upgrading'
+[ ! -e "$STATE_DIR/admin-input.json" ] || die 'Recover the interrupted admin configuration transaction before installing/upgrading'
 check_dir() {
   [ ! -L "$1" ] || die 'Refusing symbolic-link destination'
   if [ -e "$1" ]; then
@@ -179,4 +185,7 @@ if [ "$MODE" = wizard ]; then
     printf '%s\n' 'Deployment cancelled or failed; original program and deployment preserved. Bootstrap packages may remain.' >&2
     exit "$result"
   fi
+fi
+if [ "$WITH_ADMIN" = yes ]; then
+  "$dest" --config-dir "$CONFIG_DIR" --state-dir "$STATE_DIR" admin install --archive "$work/$ASSET" --execute
 fi

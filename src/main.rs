@@ -1,3 +1,8 @@
+mod admin;
+mod admin_auth;
+mod admin_install;
+mod admin_policy;
+mod admin_read;
 mod artifacts;
 mod cn_route;
 mod cn_warp;
@@ -42,6 +47,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Action {
+    /// Single-administrator HTTPS console (independent from node distribution).
+    Admin {
+        #[command(subcommand)]
+        action: admin::Action,
+    },
     /// Manage the deployed websites and recover initial OpenList access.
     Web {
         #[command(subcommand)]
@@ -149,6 +159,7 @@ fn run() -> Result<()> {
     }
     let store = store::Store::new(cli.config_dir, cli.state_dir)?;
     match cli.command {
+        Action::Admin { action } => admin::run(store, action)?,
         Action::Web { action } => web_services::run(&store, action)?,
         Action::CnRoute(command) => cn_route::run(command)?,
         Action::Doctor { json } => diagnostics::doctor(&store, json)?,
@@ -238,9 +249,12 @@ fn run() -> Result<()> {
             let _lease = provision::Lease::hold(&_guard);
             if store.state_dir.join("deployment.json").exists() {
                 deploy::recover(&store, token_file.as_deref())?;
-            } else {
+            } else if store.state_dir.join("transaction.json").exists()
+                || !store.state_dir.join("admin-input.json").exists()
+            {
                 host::recover(&store)?;
             }
+            admin_policy::recover_inputs(&store)?;
             println!("Interrupted deployment restored and verified.");
         }
         Action::Takeover { release } => {
